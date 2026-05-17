@@ -17,14 +17,23 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
     .join(" · ");
 
   return (
-    <View className="mb-3 rounded-2xl border border-bistro-border bg-bistro-card p-4">
-      <View className="flex-row justify-between">
-        <View className="flex-1 pr-3">
-          <Text className="font-semibold text-base text-bistro-cream">{line.name}</Text>
+    <View
+      style={{
+        marginBottom: 12,
+        borderRadius: 16,
+        borderWidth: 1,
+        borderColor: "#3d3528",
+        backgroundColor: "#242019",
+        padding: 16,
+      }}
+    >
+      <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+        <View style={{ flex: 1, paddingRight: 12 }}>
+          <Text style={{ fontSize: 16, fontWeight: "600", color: "#f5f0e6" }}>{line.name}</Text>
           {modLabels ? (
-            <Text className="mt-0.5 text-xs text-bistro-muted">{modLabels}</Text>
+            <Text style={{ marginTop: 2, fontSize: 12, color: "#9a9080" }}>{modLabels}</Text>
           ) : null}
-          <Text className="mt-1 text-sm text-bistro-gold">
+          <Text style={{ marginTop: 4, fontSize: 15, fontWeight: "600", color: "#c9a962" }}>
             ${(line.unitPrice * line.quantity).toFixed(2)}
           </Text>
         </View>
@@ -33,34 +42,80 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
             hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
             onRemove();
           }}
-          hitSlop={8}
+          hitSlop={12}
+          style={{
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            backgroundColor: "#1a1814",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
         >
-          <Ionicons name="trash-outline" size={20} color="#9a9080" />
+          <Ionicons name="trash-outline" size={18} color="#9a9080" />
         </Pressable>
       </View>
-      <View className="mt-3 flex-row items-center justify-between">
-        <View className="flex-row items-center rounded-xl border border-bistro-border bg-bistro-surface">
+
+      <View
+        style={{
+          marginTop: 14,
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}
+      >
+        <View
+          style={{
+            flexDirection: "row",
+            alignItems: "center",
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#3d3528",
+            backgroundColor: "#1a1814",
+            height: 40,
+          }}
+        >
           <Pressable
             onPress={() => {
               hapticSelection();
               onDecrement();
             }}
-            className="px-3 py-2"
+            style={{
+              width: 40,
+              height: 40,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
             <Ionicons name="remove" size={18} color="#c9a962" />
           </Pressable>
-          <Text className="min-w-[28px] text-center font-semibold text-bistro-cream">{line.quantity}</Text>
+          <Text
+            style={{
+              minWidth: 28,
+              textAlign: "center",
+              fontSize: 16,
+              fontWeight: "700",
+              color: "#f5f0e6",
+            }}
+          >
+            {line.quantity}
+          </Text>
           <Pressable
             onPress={() => {
               hapticSelection();
               onIncrement();
             }}
-            className="px-3 py-2"
+            style={{
+              width: 40,
+              height: 40,
+              alignItems: "center",
+              justifyContent: "center",
+            }}
           >
             <Ionicons name="add" size={18} color="#c9a962" />
           </Pressable>
         </View>
-        <Text className="text-xs text-bistro-muted">${line.unitPrice.toFixed(2)} each</Text>
+        <Text style={{ fontSize: 12, color: "#6b6358" }}>${line.unitPrice.toFixed(2)} each</Text>
       </View>
     </View>
   );

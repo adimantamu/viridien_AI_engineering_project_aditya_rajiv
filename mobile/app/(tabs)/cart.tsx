@@ -1,10 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
 import { hapticNotification, Haptics } from "@/src/lib/haptics";
-import { LinearGradient } from "expo-linear-gradient";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CartLineItem } from "@/components/CartLineItem";
 import { Header } from "@/components/Header";
+import { PrimaryButton } from "@/components/PrimaryButton";
 import { useCartStore } from "@/src/store/cartStore";
 
 export default function CartScreen() {
@@ -31,8 +31,9 @@ export default function CartScreen() {
                 hapticNotification(Haptics.NotificationFeedbackType.Warning);
                 clearCart();
               }}
+              hitSlop={8}
             >
-              <Text className="text-sm text-bistro-muted">Clear</Text>
+              <Text style={{ fontSize: 14, color: "#9a9080", fontWeight: "500" }}>Clear</Text>
             </Pressable>
           ) : undefined
         }
@@ -47,8 +48,16 @@ export default function CartScreen() {
           </Text>
         </View>
       ) : (
-        <>
-          <ScrollView className="flex-1 px-4 pt-4">
+        <View style={{ flex: 1 }}>
+          <ScrollView
+            style={{ flex: 1 }}
+            contentContainerStyle={{
+              paddingHorizontal: 16,
+              paddingTop: 16,
+              paddingBottom: 16,
+            }}
+            showsVerticalScrollIndicator={false}
+          >
             {lines.map((line) => (
               <CartLineItem
                 key={line.lineId}
@@ -58,46 +67,69 @@ export default function CartScreen() {
                 onRemove={() => removeItem(line.lineId, line.quantity)}
               />
             ))}
-            <View className="mt-2 rounded-2xl border border-bistro-border bg-bistro-card p-4">
-              <View className="flex-row justify-between py-1">
-                <Text className="text-bistro-muted">Subtotal</Text>
-                <Text className="text-bistro-cream">${total.toFixed(2)}</Text>
+
+            <View
+              style={{
+                marginTop: 8,
+                borderRadius: 16,
+                borderWidth: 1,
+                borderColor: "#3d3528",
+                backgroundColor: "#242019",
+                padding: 16,
+              }}
+            >
+              <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+                <Text style={{ color: "#9a9080", fontSize: 15 }}>Subtotal</Text>
+                <Text style={{ color: "#f5f0e6", fontSize: 15 }}>${total.toFixed(2)}</Text>
               </View>
-              <View className="flex-row justify-between py-1">
-                <Text className="text-bistro-muted">Tax (8%)</Text>
-                <Text className="text-bistro-cream">${tax.toFixed(2)}</Text>
+              <View style={{ flexDirection: "row", justifyContent: "space-between", paddingVertical: 4 }}>
+                <Text style={{ color: "#9a9080", fontSize: 15 }}>Tax (8%)</Text>
+                <Text style={{ color: "#f5f0e6", fontSize: 15 }}>${tax.toFixed(2)}</Text>
               </View>
-              <View className="mt-2 flex-row justify-between border-t border-bistro-border pt-3">
-                <Text className="font-semibold text-bistro-cream">Total</Text>
-                <Text className="font-semibold text-lg text-bistro-gold">${grandTotal.toFixed(2)}</Text>
+              <View
+                style={{
+                  flexDirection: "row",
+                  justifyContent: "space-between",
+                  marginTop: 8,
+                  paddingTop: 12,
+                  borderTopWidth: 1,
+                  borderTopColor: "#3d3528",
+                }}
+              >
+                <Text style={{ color: "#f5f0e6", fontSize: 16, fontWeight: "600" }}>Total</Text>
+                <Text style={{ color: "#c9a962", fontSize: 20, fontWeight: "700" }}>
+                  ${grandTotal.toFixed(2)}
+                </Text>
               </View>
             </View>
-            <View className="h-28" />
           </ScrollView>
 
           <View
-            className="absolute bottom-0 left-0 right-0 border-t border-bistro-border bg-bistro-bg px-4 pt-3"
-            style={{ paddingBottom: insets.bottom + 12 }}
+            style={{
+              paddingHorizontal: 16,
+              paddingTop: 12,
+              paddingBottom: Math.max(insets.bottom, 12) + 4,
+              borderTopWidth: 1,
+              borderTopColor: "#3d3528",
+              backgroundColor: "#0f0e0c",
+            }}
           >
-            <Pressable
+            <PrimaryButton
+              label={`Place order  ·  $${grandTotal.toFixed(2)}`}
               onPress={() => hapticNotification(Haptics.NotificationFeedbackType.Success)}
+            />
+            <Text
+              style={{
+                marginTop: 10,
+                textAlign: "center",
+                fontSize: 11,
+                color: "#6b6358",
+              }}
             >
-              <LinearGradient
-                colors={["#c9a962", "#8a7340"]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                className="items-center rounded-2xl py-4"
-              >
-                <Text className="font-semibold text-base text-bistro-bg">
-                  Place order · ${grandTotal.toFixed(2)}
-                </Text>
-              </LinearGradient>
-            </Pressable>
-            <Text className="mt-2 text-center text-xs text-bistro-muted">
               Demo checkout — no payment processed
             </Text>
           </View>
-        </>
+        </View>
       )}
     </View>
   );

@@ -1,3 +1,4 @@
+import { CategoryFilter } from "@/components/CategoryFilter";
 import { hapticNotification, Haptics } from "@/src/lib/haptics";
 import { useMemo, useState } from "react";
 import {
@@ -31,40 +32,18 @@ export default function MenuScreen() {
   return (
     <View className="flex-1 bg-bistro-bg">
       <Header title="Menu" subtitle="Seasonal plates & craft drinks" />
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        className="max-h-12 border-b border-bistro-border"
-        contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 10, gap: 8 }}
-      >
-        {categories.map((cat) => (
-          <Pressable
-            key={cat}
-            onPress={() => setCategory(cat)}
-            className={`rounded-full px-4 py-1.5 ${
-              category === cat ? "bg-bistro-gold" : "border border-bistro-border bg-bistro-surface"
-            }`}
-          >
-            <Text
-              className={`text-sm font-medium ${
-                category === cat ? "text-bistro-bg" : "text-bistro-muted"
-              }`}
-            >
-              {cat}
-            </Text>
-          </Pressable>
-        ))}
-      </ScrollView>
+      <CategoryFilter categories={categories} selected={category} onSelect={setCategory} />
 
       <ScrollView
-        className="flex-1 px-4 pt-4"
+        className="flex-1"
+        contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 16, paddingBottom: 24 }}
         refreshControl={<RefreshControl refreshing={loading} onRefresh={loadMenu} tintColor="#c9a962" />}
       >
         {loading && !items.length ? (
-          <ActivityIndicator color="#c9a962" className="mt-12" />
+          <ActivityIndicator color="#c9a962" style={{ marginTop: 48 }} />
         ) : null}
         {error ? (
-          <View className="mb-4 rounded-xl border border-bistro-accent/50 bg-bistro-card p-4">
+          <View className="mb-4 rounded-2xl border border-bistro-accent/50 bg-bistro-card p-4">
             <Text className="text-bistro-cream">Could not reach the kitchen API.</Text>
             <Text className="mt-1 text-sm text-bistro-muted" selectable>
               {error}
@@ -84,7 +63,6 @@ export default function MenuScreen() {
             }}
           />
         ))}
-        <View className="h-8" />
       </ScrollView>
     </View>
   );

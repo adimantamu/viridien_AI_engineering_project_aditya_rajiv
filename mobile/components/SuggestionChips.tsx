@@ -13,8 +13,8 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      className="mb-2"
-      contentContainerStyle={{ paddingHorizontal: 4, gap: 8 }}
+      contentContainerStyle={{ paddingHorizontal: 4, gap: 8, alignItems: "center" }}
+      style={{ marginBottom: 8 }}
     >
       {suggestions.map((s) => (
         <Pressable
@@ -23,9 +23,18 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
             hapticSelection();
             onSelect(s);
           }}
-          className="rounded-full border border-bistro-gold/40 bg-bistro-surface px-4 py-2 active:opacity-80"
+          style={{
+            height: 34,
+            paddingHorizontal: 14,
+            borderRadius: 17,
+            borderWidth: 1,
+            borderColor: "rgba(201, 169, 98, 0.45)",
+            backgroundColor: "#1a1814",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
         >
-          <Text className="text-sm text-bistro-gold">{s}</Text>
+          <Text style={{ fontSize: 13, fontWeight: "500", color: "#c9a962" }}>{s}</Text>
         </Pressable>
       ))}
     </ScrollView>
