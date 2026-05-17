@@ -27,6 +27,18 @@ const ChatBodySchema = z.object({
       subtotal: z.number(),
     })
     .optional(),
+  orders: z
+    .array(
+      z.object({
+        id: z.string(),
+        orderNumber: z.number(),
+        status: z.enum(["placed", "cancelled"]),
+        total: z.number(),
+        itemCount: z.number(),
+        createdAt: z.number(),
+      }),
+    )
+    .optional(),
 });
 
 export const chatRouter = Router();

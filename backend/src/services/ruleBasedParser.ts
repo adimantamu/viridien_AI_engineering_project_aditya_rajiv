@@ -1,5 +1,6 @@
 import { MENU_ITEMS, getMenuItemById } from "../data/menu.js";
 import type { CartAction, ChatRequest, ChatResponse } from "../types/index.js";
+import { buildOrderReply, orderListReply, parseOrderActions } from "./orderParser.js";
 
 const NUMBER_WORDS: Record<string, number> = {
   a: 1,
@@ -210,6 +211,29 @@ export function parseWithRules(request: ChatRequest): ChatResponse {
 
   let actions: CartAction[] = [];
 
+  const ordersList = orderListReply(request);
+  if (ordersList) {
+    return {
+      reply: ordersList,
+      actions: [],
+      orderActions: [],
+      suggestions: ["Cancel my last order", "Add truffle fries", "View cart"],
+      parsedBy: "rules",
+    };
+  }
+
+  const orderActions = parseOrderActions(request);
+  if (orderActions.length) {
+    const orderReply = buildOrderReply(orderActions, request);
+    return {
+      reply: orderReply ?? "Done.",
+      actions: [],
+      orderActions,
+      suggestions: ["Show my orders", "Add a large water", "View cart"],
+      parsedBy: "rules",
+    };
+  }
+
   if (/(what('s| is) in my cart|show (my )?cart|view cart)/i.test(message)) {
     const count = request.cart?.lines.length ?? 0;
     return {
@@ -218,7 +242,8 @@ export function parseWithRules(request: ChatRequest): ChatResponse {
           ? `You have ${count} line item${count === 1 ? "" : "s"} in your cart. Open the Cart tab for details.`
           : "Your cart is empty. Browse the menu or tell me what you'd like to order.",
       actions: [],
-      suggestions: ["Add truffle fries", "Add a harvest bowl", "Clear cart"],
+      orderActions: [],
+      suggestions: ["Add truffle fries", "Show my orders", "Clear cart"],
       parsedBy: "rules",
     };
   }
@@ -228,7 +253,8 @@ export function parseWithRules(request: ChatRequest): ChatResponse {
       reply:
         "We have mains like our Spicy Chicken Sandwich and Truffle Mushroom Burger, bowls, salads, sides, drinks, and desserts. Check the Menu tab or ask me to add something.",
       actions: [],
-      suggestions: ["Add spicy chicken sandwich", "Add truffle fries", "What's popular?"],
+      orderActions: [],
+      suggestions: ["Add spicy chicken sandwich", "Add truffle fries", "Show my orders"],
       parsedBy: "rules",
     };
   }
@@ -244,9 +270,10 @@ export function parseWithRules(request: ChatRequest): ChatResponse {
   return {
     reply: buildReply(deduped),
     actions: deduped,
+    orderActions: [],
     suggestions: deduped.length
-      ? ["Add truffle fries", "View cart", "Remove water"]
-      : ["Add two spicy chicken sandwiches", "Add large water", "Clear cart"],
+      ? ["Add truffle fries", "View cart", "Cancel my last order"]
+      : ["Add two spicy chicken sandwiches", "Add large water", "Show my orders"],
     parsedBy: "rules",
   };
 }

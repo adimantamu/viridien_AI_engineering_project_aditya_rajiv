@@ -1,8 +1,10 @@
 import { Ionicons } from "@expo/vector-icons";
-import { hapticNotification, Haptics } from "@/src/lib/haptics";
+import { hapticImpact, hapticNotification, Haptics } from "@/src/lib/haptics";
+import { useVoiceInput } from "@/src/hooks/useVoiceInput";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,20 +20,21 @@ import { SuggestionChips } from "@/components/SuggestionChips";
 import { sendChatMessage } from "@/src/lib/api";
 import { useCartStore } from "@/src/store/cartStore";
 import { useMenuStore } from "@/src/store/menuStore";
+import { useOrdersStore } from "@/src/store/ordersStore";
 import type { ChatMessage } from "@/src/types";
 
 const WELCOME: ChatMessage = {
   id: "welcome",
   role: "assistant",
   content:
-    "Bonjour! I'm your maître d'. Tell me what you'd like — for example: \"Add two spicy chicken sandwiches and a large water.\"",
+    "Bonjour! I'm your maître d'. Tell me or tap the microphone to order — e.g. \"Add two spicy chicken sandwiches and a large water.\" You can also cancel orders by saying \"Cancel order #1001.\"",
   timestamp: Date.now(),
 };
 
 const STARTER_SUGGESTIONS = [
   "Add two spicy chicken sandwiches",
-  "Add truffle fries and a large water",
-  "What's on the menu?",
+  "Show my orders",
+  "Cancel my last order",
 ];
 
 export default function AssistantScreen() {
@@ -46,6 +49,8 @@ export default function AssistantScreen() {
   const subtotal = useCartStore((s) => s.subtotal);
   const applyActions = useCartStore((s) => s.applyActions);
   const menuItems = useMenuStore((s) => s.items);
+  const getOrderSnapshots = useOrdersStore((s) => s.getOrderSnapshots);
+  const applyOrderActions = useOrdersStore((s) => s.applyOrderActions);
 
   const sendMessage = useCallback(
     async (text: string) => {
@@ -69,10 +74,22 @@ export default function AssistantScreen() {
           message: trimmed,
           history: [...messages, userMsg].map((m) => ({ role: m.role, content: m.content })),
           cart: { lines, subtotal: subtotal() },
+          orders: getOrderSnapshots(),
         });
+
+        let didUpdate = false;
 
         if (response.actions.length && menuItems.length) {
           applyActions(response.actions, menuItems);
+          didUpdate = true;
+        }
+
+        if (response.orderActions?.length) {
+          applyOrderActions(response.orderActions);
+          didUpdate = true;
+        }
+
+        if (didUpdate) {
           hapticNotification(Haptics.NotificationFeedbackType.Success);
         }
 
@@ -84,7 +101,7 @@ export default function AssistantScreen() {
         };
 
         setMessages((prev) => [...prev, assistantMsg]);
-        setSuggestions(response.suggestions ?? []);
+        setSuggestions(response.suggestions ?? STARTER_SUGGESTIONS);
       } catch {
         setMessages((prev) => [
           ...prev,
@@ -102,25 +119,24 @@ export default function AssistantScreen() {
         setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 100);
       }
     },
-    [sending, messages, lines, subtotal, applyActions, menuItems],
+    [sending, messages, lines, subtotal, applyActions, menuItems, getOrderSnapshots, applyOrderActions],
   );
+
+  const { listening, preparing, available, toggle } = useVoiceInput({
+    onTranscriptChange: setInput,
+    onFinalTranscript: setInput,
+    onError: (msg) => Alert.alert("Voice input", msg),
+  });
+
+  const voiceActive = listening || preparing;
 
   return (
     <View className="flex-1 bg-bistro-bg">
-      <Header
-        title="AI Maître d'"
-        subtitle="Natural language ordering"
-        right={
-          <View className="rounded-full border border-bistro-gold/30 bg-bistro-surface px-3 py-1">
-            <Text className="text-xs text-bistro-gold">Powered by API</Text>
-          </View>
-        }
-      />
+      <Header title="AI Maître d'" subtitle="Type or speak your order" />
 
       <KeyboardAvoidingView
         className="flex-1"
         behavior={Platform.OS === "ios" ? "padding" : undefined}
-        keyboardVerticalOffset={Platform.OS === "ios" ? 0 : 0}
       >
         <ScrollView
           ref={scrollRef}
@@ -130,6 +146,22 @@ export default function AssistantScreen() {
           {messages.map((m) => (
             <ChatBubble key={m.id} message={m} />
           ))}
+          {voiceActive ? (
+            <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: preparing ? "#c9a962" : "#e85d4c",
+                  marginRight: 8,
+                }}
+              />
+              <Text style={{ color: "#c9a962", fontSize: 13 }}>
+                {preparing ? "Starting microphone…" : "Listening… speak now"}
+              </Text>
+            </View>
+          ) : null}
           {sending ? (
             <View className="mb-4 flex-row items-center self-start">
               <ActivityIndicator color="#c9a962" />
@@ -138,26 +170,85 @@ export default function AssistantScreen() {
           ) : null}
         </ScrollView>
 
-        <View className="border-t border-bistro-border bg-bistro-surface px-4 pt-2" style={{ paddingBottom: insets.bottom + 8 }}>
+        <View
+          style={{
+            borderTopWidth: 1,
+            borderTopColor: "#3d3528",
+            backgroundColor: "#1a1814",
+            paddingHorizontal: 16,
+            paddingTop: 10,
+            paddingBottom: insets.bottom + 8,
+          }}
+        >
           <SuggestionChips suggestions={suggestions} onSelect={(s) => sendMessage(s)} />
-          <View className="flex-row items-end gap-2">
+
+          <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
+            <Pressable
+              onPress={() => {
+                hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
+                toggle();
+              }}
+              disabled={!available || sending}
+              style={({ pressed }) => ({
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: voiceActive ? "#e85d4c" : pressed ? "#2a2520" : "#242019",
+                borderWidth: 1,
+                borderColor: voiceActive ? "#e85d4c" : "#3d3528",
+                opacity: !available || sending ? 0.45 : 1,
+              })}
+            >
+              <Ionicons
+                name={voiceActive ? "stop" : "mic"}
+                size={22}
+                color={voiceActive ? "#fff" : "#c9a962"}
+              />
+            </Pressable>
+
             <TextInput
               value={input}
               onChangeText={setInput}
-              placeholder="Add two spicy chicken sandwiches..."
+              placeholder={
+                preparing
+                  ? "Opening microphone…"
+                  : listening
+                    ? "Speak now — words appear here…"
+                    : "Add two spicy chicken sandwiches…"
+              }
               placeholderTextColor="#6b6358"
               multiline
               maxLength={500}
-              className="max-h-24 flex-1 rounded-2xl border border-bistro-border bg-bistro-card px-4 py-3 text-base text-bistro-cream"
-              onSubmitEditing={() => sendMessage(input)}
               editable={!sending}
+              style={{
+                flex: 1,
+                maxHeight: 96,
+                minHeight: 48,
+                borderRadius: 14,
+                borderWidth: 1,
+                borderColor: voiceActive ? "#c9a962" : "#3d3528",
+                backgroundColor: voiceActive ? "#2a2520" : "#242019",
+                paddingHorizontal: 14,
+                paddingVertical: 12,
+                fontSize: 16,
+                color: "#f5f0e6",
+              }}
+              onSubmitEditing={() => sendMessage(input)}
             />
+
             <Pressable
               onPress={() => sendMessage(input)}
               disabled={sending || !input.trim()}
-              className={`h-12 w-12 items-center justify-center rounded-full ${
-                sending || !input.trim() ? "bg-bistro-border" : "bg-bistro-gold"
-              }`}
+              style={{
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: sending || !input.trim() ? "#3d3528" : "#c9a962",
+              }}
             >
               <Ionicons
                 name="send"

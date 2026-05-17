@@ -3,9 +3,11 @@ import { Tabs } from "expo-router";
 import { Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useCartStore } from "@/src/store/cartStore";
+import { useOrdersStore } from "@/src/store/ordersStore";
 
 export default function TabLayout() {
-  const itemCount = useCartStore((s) => s.itemCount());
+  const cartCount = useCartStore((s) => s.itemCount());
+  const activeOrders = useOrdersStore((s) => s.activeOrderCount());
   const insets = useSafeAreaInsets();
   const tabBarHeight = 56 + insets.bottom;
 
@@ -24,7 +26,7 @@ export default function TabLayout() {
         tabBarActiveTintColor: "#c9a962",
         tabBarInactiveTintColor: "#6b6358",
         tabBarLabelStyle: {
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: "600",
           marginTop: 2,
         },
@@ -51,7 +53,7 @@ export default function TabLayout() {
           tabBarIcon: ({ color, size }) => (
             <View>
               <Ionicons name="bag-handle" size={size} color={color} />
-              {itemCount > 0 && (
+              {cartCount > 0 && (
                 <View
                   style={{
                     position: "absolute",
@@ -67,7 +69,38 @@ export default function TabLayout() {
                   }}
                 >
                   <Text style={{ fontSize: 10, fontWeight: "700", color: "#fff" }}>
-                    {itemCount > 9 ? "9+" : itemCount}
+                    {cartCount > 9 ? "9+" : cartCount}
+                  </Text>
+                </View>
+              )}
+            </View>
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="orders"
+        options={{
+          title: "Orders",
+          tabBarIcon: ({ color, size }) => (
+            <View>
+              <Ionicons name="receipt" size={size} color={color} />
+              {activeOrders > 0 && (
+                <View
+                  style={{
+                    position: "absolute",
+                    right: -8,
+                    top: -4,
+                    minWidth: 16,
+                    height: 16,
+                    borderRadius: 8,
+                    backgroundColor: "#6b9e78",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    paddingHorizontal: 4,
+                  }}
+                >
+                  <Text style={{ fontSize: 10, fontWeight: "700", color: "#0f0e0c" }}>
+                    {activeOrders > 9 ? "9+" : activeOrders}
                   </Text>
                 </View>
               )}

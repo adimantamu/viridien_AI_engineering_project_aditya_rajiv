@@ -1,7 +1,7 @@
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
-import type { CartLine, ChatMessage, ChatResponse, MenuItem } from "../types";
+import type { CartLine, ChatMessage, ChatResponse, ClientOrderSnapshot, MenuItem } from "../types";
 
 type ApiExtra = {
   apiUrl?: string;
@@ -13,13 +13,6 @@ function getExtra(): ApiExtra {
   return (Constants.expoConfig?.extra ?? {}) as ApiExtra;
 }
 
-/**
- * Picks API base URL from app.json extra:
- * - apiUrlLocal  → laptop browser, iOS Simulator (http://localhost:3001)
- * - apiUrlDevice → physical phone on same Wi‑Fi (http://YOUR_LAN_IP:3001)
- *
- * Update apiUrlDevice to your PC's IPv4 from `ipconfig` (Wi‑Fi adapter).
- */
 export function getApiBaseUrl(): string {
   const extra = getExtra();
   const local = extra.apiUrlLocal ?? extra.apiUrl ?? "http://localhost:3001";
@@ -68,6 +61,7 @@ export async function sendChatMessage(params: {
   message: string;
   history: Pick<ChatMessage, "role" | "content">[];
   cart: { lines: CartLine[]; subtotal: number };
+  orders: ClientOrderSnapshot[];
 }): Promise<ChatResponse> {
   return request<ChatResponse>("/api/chat", {
     method: "POST",

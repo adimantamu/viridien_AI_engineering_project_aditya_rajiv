@@ -43,10 +43,28 @@ export interface ChatMessage {
   content: string;
 }
 
+export type OrderActionType = "CANCEL_ORDER" | "CANCEL_ALL_ORDERS";
+
+export interface OrderAction {
+  type: OrderActionType;
+  orderId?: string;
+  orderNumber?: number;
+}
+
+export interface ClientOrderSnapshot {
+  id: string;
+  orderNumber: number;
+  status: "placed" | "cancelled";
+  total: number;
+  itemCount: number;
+  createdAt: number;
+}
+
 export interface ChatRequest {
   message: string;
   history?: ChatMessage[];
   cart?: ClientCartSnapshot;
+  orders?: ClientOrderSnapshot[];
 }
 
 export interface ClientCartLine {
@@ -66,6 +84,7 @@ export interface ClientCartSnapshot {
 export interface ChatResponse {
   reply: string;
   actions: CartAction[];
+  orderActions?: OrderAction[];
   suggestions?: string[];
   parsedBy: "openai" | "rules";
 }

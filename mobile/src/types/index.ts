@@ -5,6 +5,10 @@ export type CartActionType =
   | "CLEAR"
   | "SET_MODIFIER";
 
+export type OrderActionType = "CANCEL_ORDER" | "CANCEL_ALL_ORDERS";
+
+export type OrderStatus = "placed" | "cancelled";
+
 export interface MenuModifierOption {
   id: string;
   label: string;
@@ -37,6 +41,12 @@ export interface CartAction {
   modifiers?: Record<string, string>;
 }
 
+export interface OrderAction {
+  type: OrderActionType;
+  orderId?: string;
+  orderNumber?: number;
+}
+
 export interface CartLine {
   lineId: string;
   itemId: string;
@@ -46,6 +56,18 @@ export interface CartLine {
   modifiers: Record<string, string>;
 }
 
+export interface Order {
+  id: string;
+  orderNumber: number;
+  status: OrderStatus;
+  lines: CartLine[];
+  subtotal: number;
+  tax: number;
+  total: number;
+  createdAt: number;
+  cancelledAt?: number;
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
@@ -53,9 +75,19 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface ClientOrderSnapshot {
+  id: string;
+  orderNumber: number;
+  status: OrderStatus;
+  total: number;
+  itemCount: number;
+  createdAt: number;
+}
+
 export interface ChatResponse {
   reply: string;
   actions: CartAction[];
+  orderActions?: OrderAction[];
   suggestions?: string[];
   parsedBy: "openai" | "rules";
 }

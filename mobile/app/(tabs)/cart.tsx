@@ -1,23 +1,37 @@
 import { Ionicons } from "@expo/vector-icons";
 import { hapticNotification, Haptics } from "@/src/lib/haptics";
-import { Pressable, ScrollView, Text, View } from "react-native";
+import { useRouter } from "expo-router";
+import { Alert, Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { CartLineItem } from "@/components/CartLineItem";
 import { Header } from "@/components/Header";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { useCartStore } from "@/src/store/cartStore";
+import { useOrdersStore } from "@/src/store/ordersStore";
 
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
+  const router = useRouter();
   const lines = useCartStore((s) => s.lines);
   const subtotal = useCartStore((s) => s.subtotal);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
   const removeItem = useCartStore((s) => s.removeItem);
   const clearCart = useCartStore((s) => s.clearCart);
+  const placeOrderFromCart = useOrdersStore((s) => s.placeOrderFromCart);
 
   const total = subtotal();
   const tax = total * 0.08;
   const grandTotal = total + tax;
+
+  const handlePlaceOrder = () => {
+    const order = placeOrderFromCart();
+    if (!order) {
+      Alert.alert("Cart is empty", "Add items from the menu before placing an order.");
+      return;
+    }
+    hapticNotification(Haptics.NotificationFeedbackType.Success);
+    router.push("/(tabs)/orders");
+  };
 
   return (
     <View className="flex-1 bg-bistro-bg">
@@ -116,7 +130,7 @@ export default function CartScreen() {
           >
             <PrimaryButton
               label={`Place order  ·  $${grandTotal.toFixed(2)}`}
-              onPress={() => hapticNotification(Haptics.NotificationFeedbackType.Success)}
+              onPress={handlePlaceOrder}
             />
             <Text
               style={{
@@ -126,7 +140,7 @@ export default function CartScreen() {
                 color: "#6b6358",
               }}
             >
-              Demo checkout — no payment processed
+              Demo checkout — order appears in Orders tab
             </Text>
           </View>
         </View>
