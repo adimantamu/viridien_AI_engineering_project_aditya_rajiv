@@ -1,4 +1,4 @@
-import * as Haptics from "expo-haptics";
+import { hapticNotification, Haptics } from "@/src/lib/haptics";
 import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
@@ -78,7 +78,7 @@ export default function MenuScreen() {
             item={item}
             onAdd={() => {
               addItem(item, 1);
-              Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              hapticNotification(Haptics.NotificationFeedbackType.Success);
             }}
           />
         ))}

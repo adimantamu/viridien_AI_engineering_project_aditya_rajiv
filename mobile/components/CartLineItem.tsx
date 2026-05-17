@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
+import { hapticImpact, hapticSelection, Haptics } from "@/src/lib/haptics";
 import { Pressable, Text, View } from "react-native";
 import type { CartLine } from "@/src/types";
 
@@ -30,7 +30,7 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
         </View>
         <Pressable
           onPress={() => {
-            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+            hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
             onRemove();
           }}
           hitSlop={8}
@@ -42,7 +42,7 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
         <View className="flex-row items-center rounded-xl border border-bistro-border bg-bistro-surface">
           <Pressable
             onPress={() => {
-              Haptics.selectionAsync();
+              hapticSelection();
               onDecrement();
             }}
             className="px-3 py-2"
@@ -52,7 +52,7 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
           <Text className="min-w-[28px] text-center font-semibold text-bistro-cream">{line.quantity}</Text>
           <Pressable
             onPress={() => {
-              Haptics.selectionAsync();
+              hapticSelection();
               onIncrement();
             }}
             className="px-3 py-2"

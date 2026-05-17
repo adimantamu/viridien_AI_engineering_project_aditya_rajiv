@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
+import { hapticImpact, Haptics } from "@/src/lib/haptics";
 import { Pressable, Text, View } from "react-native";
 import { getMenuIcon } from "@/src/constants/icons";
 import type { MenuItem } from "@/src/types";
@@ -37,7 +37,7 @@ export function MenuItemCard({ item, onAdd }: Props) {
       </View>
       <Pressable
         onPress={() => {
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          hapticImpact(Haptics.ImpactFeedbackStyle.Light);
           onAdd();
         }}
         className="border-t border-bistro-border bg-bistro-surface/50 py-3 active:opacity-80"

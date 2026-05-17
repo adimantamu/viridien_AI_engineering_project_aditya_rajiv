@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
+import { hapticNotification, Haptics } from "@/src/lib/haptics";
 import { useCallback, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -73,7 +73,7 @@ export default function AssistantScreen() {
 
         if (response.actions.length && menuItems.length) {
           applyActions(response.actions, menuItems);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          hapticNotification(Haptics.NotificationFeedbackType.Success);
         }
 
         const assistantMsg: ChatMessage = {

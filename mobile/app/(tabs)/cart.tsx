@@ -1,5 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
-import * as Haptics from "expo-haptics";
+import { hapticNotification, Haptics } from "@/src/lib/haptics";
 import { LinearGradient } from "expo-linear-gradient";
 import { Pressable, ScrollView, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -28,7 +28,7 @@ export default function CartScreen() {
           lines.length > 0 ? (
             <Pressable
               onPress={() => {
-                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                hapticNotification(Haptics.NotificationFeedbackType.Warning);
                 clearCart();
               }}
             >
@@ -80,7 +80,7 @@ export default function CartScreen() {
             style={{ paddingBottom: insets.bottom + 12 }}
           >
             <Pressable
-              onPress={() => Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)}
+              onPress={() => hapticNotification(Haptics.NotificationFeedbackType.Success)}
             >
               <LinearGradient
                 colors={["#c9a962", "#8a7340"]}

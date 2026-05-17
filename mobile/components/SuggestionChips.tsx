@@ -1,4 +1,4 @@
-import * as Haptics from "expo-haptics";
+import { hapticSelection } from "@/src/lib/haptics";
 import { Pressable, ScrollView, Text } from "react-native";
 
 interface Props {
@@ -20,7 +20,7 @@ export function SuggestionChips({ suggestions, onSelect }: Props) {
         <Pressable
           key={s}
           onPress={() => {
-            Haptics.selectionAsync();
+            hapticSelection();
             onSelect(s);
           }}
           className="rounded-full border border-bistro-gold/40 bg-bistro-surface px-4 py-2 active:opacity-80"
