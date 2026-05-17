@@ -2,32 +2,37 @@
 
 A full-stack mobile ordering experience built for the **Viridien AI Full-Stack Engineering Internship** challenge. Guests browse a curated restaurant menu and manage a live shopping cart through both traditional UI controls and a conversational **AI maître d'** that converts natural language into structured cart operations.
 
-The repository is a **monorepo** with two deployable parts:
+The repository is a **monorepo** with two parts:
 
 | Package | Role | Technology |
 |---------|------|------------|
 | `backend/` | REST API, NLP / LLM orchestration, menu catalog | Node.js 22, Express 4, TypeScript 5 |
-| `mobile/` | Cross-platform client (iOS, Android, web via Expo) | Expo SDK 52, React Native 0.76, NativeWind 4 |
+| `mobile/` | Cross-platform client (iOS, Android, web via Expo) | **Expo SDK 54**, React Native 0.81, NativeWind 4 |
+
+> **Note:** Docker runs the **API only**. The Expo app always runs on your machine (or loads in **Expo Go** on your phone) via the Metro bundler.
 
 ---
 
 ## Table of contents
 
 1. [What this project does](#what-this-project-does)
-2. [System architecture](#system-architecture)
-3. [AI design and specifications](#ai-design-and-specifications)
-4. [Data models and cart logic](#data-models-and-cart-logic)
-5. [API reference](#api-reference)
-6. [Repository structure](#repository-structure)
-7. [Getting started (end user setup)](#getting-started-end-user-setup)
-   - [Option A: Docker (recommended for API)](#option-a-docker-recommended-for-api)
-   - [Option B: Local Node.js (full stack)](#option-b-local-nodejs-full-stack)
-8. [Connecting the mobile app to your API](#connecting-the-mobile-app-to-your-api)
-9. [Environment variables](#environment-variables)
-10. [Development commands](#development-commands)
-11. [Troubleshooting](#troubleshooting)
-12. [Submission / demo checklist](#submission--demo-checklist)
-13. [License](#license)
+2. [Recent changes and implementation notes](#recent-changes-and-implementation-notes)
+3. [System architecture](#system-architecture)
+4. [AI design and specifications](#ai-design-and-specifications)
+5. [Data models and cart logic](#data-models-and-cart-logic)
+6. [API reference](#api-reference)
+7. [Repository structure](#repository-structure)
+8. [Quick start](#quick-start)
+9. [Running on Expo Go (physical phone)](#running-on-expo-go-physical-phone)
+10. [Running on laptop (web browser)](#running-on-laptop-web-browser)
+11. [API URL configuration (laptop + phone)](#api-url-configuration-laptop--phone)
+12. [OpenAI API key setup and verification](#openai-api-key-setup-and-verification)
+13. [Docker](#docker)
+14. [Environment variables](#environment-variables)
+15. [Development commands](#development-commands)
+16. [Troubleshooting](#troubleshooting)
+17. [Tech stack summary](#tech-stack-summary)
+18. [License](#license)
 
 ---
 
@@ -39,7 +44,7 @@ The repository is a **monorepo** with two deployable parts:
 - **Manual cart management** — Add from menu cards; increment, decrement, or remove lines on the Cart tab.
 - **AI ordering** — Type or tap suggestions like *"Add two spicy chicken sandwiches and a large water"*; the assistant replies in natural language and returns machine-readable **cart actions** that the app applies automatically.
 - **Modifiers** — Size (water), spice level (sandwich), protein add-ons (salad), etc., inferred from text or defaulted sensibly.
-- **Premium UI** — Dark bistro palette (gold/cream on charcoal), haptic feedback, tab navigation, gradient checkout CTA.
+- **Premium UI** — Dark bistro palette (gold/cream on charcoal), haptic feedback on native devices, tab navigation, gradient checkout CTA.
 
 ### Engineering goals demonstrated
 
@@ -47,6 +52,21 @@ The repository is a **monorepo** with two deployable parts:
 - **Structured AI output** (JSON actions) rather than free-text-only responses.
 - **Graceful degradation** when no cloud LLM key is configured (rule-based parser).
 - Production-minded touches: Zod validation, TypeScript throughout, Dockerized API, health checks.
+
+---
+
+## Recent changes and implementation notes
+
+| Area | Detail |
+|------|--------|
+| **Expo SDK 54** | Upgraded from SDK 52 to match current **Expo Go** on the App Store (SDK 54). |
+| **Dual API URLs** | `app.json` uses `apiUrlLocal` (laptop) and `apiUrlDevice` (phone on Wi‑Fi). `src/lib/api.ts` picks the correct URL automatically. |
+| **iOS local HTTP** | `NSAllowsLocalNetworking` enabled so Expo Go can call `http://<LAN-IP>:3001`. |
+| **Docker + OpenAI** | `docker-compose.yml` loads `backend/.env` only — removed host `OPENAI_API_KEY` override that was wiping the key with an empty value. |
+| **Web haptics** | `src/lib/haptics.ts` no-ops on web; native haptics on iOS/Android. |
+| **Babel / NativeWind** | SDK 54 uses `nativewind/babel` + Reanimated 4 + `react-native-worklets@0.5.1`. |
+| **Menu errors** | Failed API calls show the URL the app tried (helps debug wrong LAN IP). |
+| **Session notes** | Extended dev log in [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md). |
 
 ---
 
@@ -80,43 +100,23 @@ flowchart TB
   UI -->|GET /api/menu| Routes
 ```
 
-### Request flow: conversational order
+### What runs where
 
-1. User sends a message on the **AI** tab (`mobile/app/(tabs)/assistant.tsx`).
-2. The client posts to `POST /api/chat` with:
-   - `message` — current utterance
-   - `history` — last turns (for context when using OpenAI)
-   - `cart` — snapshot of current lines and subtotal
-3. `aiService.ts` chooses a parsing strategy (see [AI design](#ai-design-and-specifications)).
-4. The API returns `{ reply, actions[], suggestions?, parsedBy }`.
-5. `cartStore.applyActions()` maps each action to Zustand mutations (`ADD`, `REMOVE`, etc.).
-6. The Cart tab and tab-badge count update reactively.
-
-### Request flow: manual menu add
-
-1. User taps **Add to cart** on a menu card.
-2. `cartStore.addItem()` runs entirely on-device (no API call).
-3. Optional modifiers use defaults from the menu definition (e.g. medium water size).
+| Component | Runs on | Port |
+|-----------|---------|------|
+| Backend API | Docker **or** `npm run dev` | `3001` |
+| Expo Metro / app UI | Your PC (`npx expo start`) | `8081` (default) |
+| Expo Go (phone) | Your iPhone/Android | Connects to Metro on PC |
 
 ### Why the cart lives on the client
 
-The challenge requires a **functional shopping cart** with UI and AI control. Cart state is held in **Zustand** for instant UX. The backend is **stateless**: it receives cart context only to improve AI replies (e.g. *"what's in my cart?"*) and does not persist orders. This keeps deployment simple and matches typical mobile commerce patterns.
+Cart state is in **Zustand** for instant UX. The backend is **stateless** and only receives cart snapshots to improve AI context (e.g. *"what's in my cart?"*).
 
-### Network boundaries
-
-| From | To | Protocol |
-|------|-----|----------|
-| Expo app | Backend API | HTTP JSON (`fetch`) |
-| Backend | OpenAI (optional) | HTTPS via official `openai` SDK |
-| Docker host | Container | Published port `3001:3001` |
-
-CORS is enabled with `origin: true` so Expo web and LAN devices can call the API during development.
+CORS is enabled with `origin: true` so web and LAN devices can call the API during development.
 
 ---
 
 ## AI design and specifications
-
-The backend implements a **dual-mode parser**: cloud LLM when configured, otherwise a deterministic **rule-based** engine. Both modes emit the same `CartAction[]` schema so the mobile client never branches on parser type.
 
 ### Mode selection
 
@@ -127,172 +127,51 @@ OPENAI_API_KEY present and valid?
   └─ NO  → rule-based parser only
 ```
 
-Health endpoint reports active mode: `"ai": "openai"` or `"ai": "rules"`.
+`GET /health` returns `"ai": "openai"` or `"ai": "rules"`.  
+`POST /api/chat` returns `"parsedBy": "openai"` or `"parsedBy": "rules"`.
 
-### Mode 1: OpenAI (primary)
+### OpenAI (when configured)
 
-| Setting | Value | Notes |
-|---------|--------|------|
-| **Provider** | OpenAI | Via `openai` npm package v4.x |
-| **Default model** | `gpt-4o-mini` | Override with `OPENAI_MODEL` |
-| **API surface** | Chat Completions | `openai.chat.completions.create()` |
-| **Response format** | `{ type: "json_object" }` | Forces JSON-only assistant output |
-| **Temperature** | `0.2` | Low variance for consistent parsing |
-| **Max history turns** | Last **6** messages | Prevents unbounded prompt growth |
-| **System prompt** | Maître d' persona + full menu catalog | Item ids, modifiers, aliases embedded |
-| **Validation** | Zod schemas | `AiResponseSchema`, `CartActionSchema` |
-| **Post-processing** | `validateActions()` | Strips actions with unknown `itemId` |
+| Setting | Value |
+|---------|--------|
+| Provider | OpenAI (`openai` npm package) |
+| Default model | `gpt-4o-mini` (`OPENAI_MODEL`) |
+| Temperature | `0.2` |
+| Response format | `{ type: "json_object" }` |
+| History | Last 6 messages |
 
-**User message construction** (sent as a single `user` role message):
+### Rule-based parser (fallback)
 
-- Optional conversation block from `history`
-- Current `message`
-- Optional `cart` JSON summary (item names + quantities)
-
-**Expected JSON shape from the model:**
-
-```json
-{
-  "reply": "Human-friendly confirmation or clarifying question",
-  "actions": [
-    {
-      "type": "ADD",
-      "itemId": "spicy-chicken-sandwich",
-      "quantity": 2,
-      "modifiers": { "spice": "hot" }
-    }
-  ],
-  "suggestions": ["Add truffle fries", "View cart"]
-}
-```
-
-**Supported action types** (enforced by Zod):
-
-| Type | Fields | Semantics |
-|------|--------|-----------|
-| `ADD` | `itemId`, `quantity?`, `modifiers?` | Add units to cart (merge if same item+modifiers) |
-| `REMOVE` | `itemId`, `quantity?` | Decrease or remove matching lines |
-| `UPDATE_QUANTITY` | `itemId`, `quantity` | Set absolute quantity for matching item |
-| `CLEAR` | — | Empty entire cart |
-| `SET_MODIFIER` | Reserved in schema | Extensibility for future use |
-
-### Mode 2: Rule-based parser (fallback / offline)
-
-Implemented in `backend/src/services/ruleBasedParser.ts`. No external API calls; suitable for demos, CI, and interviews without API keys.
-
-**Techniques:**
-
-- Normalize and split compound orders (`and`, `,`, `plus`)
-- Quantity detection: digits (`2`) and words (`two`, `a`, `couple`)
-- Menu matching via item `name` and `aliases[]` (longest substring wins)
-- Modifier extraction: keyword scan (`large`, `hot`, `mild`, etc.) against menu modifier options
-- Intent handlers: `clear cart`, `show cart`, `menu` / recommendations
-- Action deduplication and quantity merging for repeated ADDs
-
-**Example** — Input: `Add two spicy chicken sandwiches and a large water`
-
-| Output field | Value |
-|--------------|--------|
-| `parsedBy` | `"rules"` |
-| `actions[0]` | `ADD spicy-chicken-sandwich ×2, modifiers.spice=hot` |
-| `actions[1]` | `ADD water ×1, modifiers.size=large` |
-
-### Cost and latency considerations (OpenAI mode)
-
-- **`gpt-4o-mini`** is chosen for fast, low-cost structured extraction (typical latency ~0.5–2s depending on network).
-- Prompt size scales with menu catalog (~11 items) plus ≤6 history messages — intentionally small.
-- For production, you would add rate limiting, request IDs, and logging; this repo keeps the surface minimal for clarity.
+No API key required. Implemented in `backend/src/services/ruleBasedParser.ts` — handles compound orders, quantities, modifiers, clear cart, menu questions.
 
 ---
 
 ## Data models and cart logic
 
-### Menu item (`MenuItem`)
+### Cart actions (API → client)
 
-Defined in `backend/src/data/menu.ts` (11 items). Each has:
+| Type | Description |
+|------|-------------|
+| `ADD` | Add item with optional `modifiers` |
+| `REMOVE` | Remove by `itemId` |
+| `UPDATE_QUANTITY` | Set quantity for `itemId` |
+| `CLEAR` | Empty cart |
 
-- Stable `id` (used in AI actions)
-- `name`, `description`, `category`, `price`
-- `tags[]` for UI chips
-- Optional `modifiers[]` (e.g. size, spice)
-- Optional `aliases[]` for NLP matching
-
-### Cart line (`CartLine`) — mobile only
-
-```typescript
-{
-  lineId: string;      // unique per line (item + modifiers)
-  itemId: string;
-  name: string;
-  quantity: number;
-  unitPrice: number;   // base price + modifier deltas
-  modifiers: Record<string, string>;
-}
-```
-
-### Client cart operations (`cartStore.ts`)
-
-| Method | Behavior |
-|--------|----------|
-| `addItem` | Merge if same `itemId` + modifiers; else new line |
-| `removeItem` | Decrement by `lineId`; remove line at 0 |
-| `updateQuantity` | Set quantity or remove if ≤ 0 |
-| `applyActions` | Apply AI `CartAction[]` batch |
-| `clearCart` | Reset lines |
-| `subtotal` / `itemCount` | Derived getters |
-
-Modifier defaults: required modifiers (e.g. water `size`) default to `medium` when not specified.
+Client implementation: `mobile/src/store/cartStore.ts` → `applyActions()`.
 
 ---
 
 ## API reference
 
-Base URL (local): `http://localhost:3001`  
-Base URL (Docker): same host port mapping `3001`
+Base URL: `http://localhost:3001` (laptop) or `http://<YOUR_LAN_IP>:3001` (phone)
 
-### `GET /health`
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Status + AI mode (`openai` / `rules`) |
+| GET | `/api/menu` | Full menu |
+| POST | `/api/chat` | Parse natural language → `{ reply, actions, parsedBy }` |
 
-```json
-{
-  "status": "ok",
-  "service": "intelligent-bistro-api",
-  "ai": "openai"
-}
-```
-
-### `GET /api/menu`
-
-Returns `{ items: MenuItem[] }`.
-
-### `GET /api/menu/categories`
-
-Returns `{ categories: string[] }`.
-
-### `POST /api/chat`
-
-**Request body:**
-
-```json
-{
-  "message": "Add two spicy chicken sandwiches and a large water",
-  "history": [
-    { "role": "user", "content": "What's popular?" },
-    { "role": "assistant", "content": "Our spicy chicken sandwich..." }
-  ],
-  "cart": {
-    "lines": [],
-    "subtotal": 0
-  }
-}
-```
-
-| Field | Required | Max | Description |
-|-------|----------|-----|-------------|
-| `message` | yes | 2000 chars | User utterance |
-| `history` | no | — | Prior chat turns |
-| `cart` | no | — | Client cart snapshot for context |
-
-**Response:**
+Example chat response:
 
 ```json
 {
@@ -301,12 +180,10 @@ Returns `{ categories: string[] }`.
     { "type": "ADD", "itemId": "spicy-chicken-sandwich", "quantity": 2, "modifiers": { "spice": "hot" } },
     { "type": "ADD", "itemId": "water", "quantity": 1, "modifiers": { "size": "large" } }
   ],
-  "suggestions": ["Add truffle fries", "View cart", "Remove water"],
-  "parsedBy": "rules"
+  "parsedBy": "openai",
+  "suggestions": ["Add truffle fries", "View cart"]
 }
 ```
-
-**Error responses:** `400` validation errors (Zod), `500` unhandled server errors.
 
 ---
 
@@ -314,70 +191,214 @@ Returns `{ categories: string[] }`.
 
 ```
 viridien_project_intelligent_bistro/
-├── docker-compose.yml       # One-command API startup
-├── .env.example               # Root env template (Docker Compose)
-├── README.md
+├── docker-compose.yml
+├── docs/
+│   └── SESSION_NOTES.md
 ├── backend/
-│   ├── Dockerfile             # Multi-stage production image
-│   ├── .dockerignore
-│   ├── .env.example
-│   ├── package.json
+│   ├── Dockerfile
+│   ├── .env.example          # copy to .env (gitignored)
 │   └── src/
-│       ├── index.ts           # Express app entry
-│       ├── data/menu.ts       # Canonical menu catalog
-│       ├── routes/
-│       │   ├── menu.ts
-│       │   └── chat.ts
-│       ├── services/
-│       │   ├── aiService.ts   # OpenAI + routing
-│       │   └── ruleBasedParser.ts
-│       └── types/index.ts
+│       ├── data/menu.ts
+│       ├── services/aiService.ts
+│       ├── services/ruleBasedParser.ts
+│       └── routes/
 └── mobile/
-    ├── app.json               # Expo config (apiUrl in extra)
-    ├── app/
-    │   ├── _layout.tsx
-    │   └── (tabs)/
-    │       ├── index.tsx      # Menu
-    │       ├── assistant.tsx  # AI chat
-    │       └── cart.tsx
-    ├── components/            # UI building blocks
+    ├── app.json              # apiUrlLocal + apiUrlDevice
+    ├── babel.config.js
+    ├── app/(tabs)/           # Menu, AI, Cart
+    ├── components/
     └── src/
-        ├── lib/api.ts         # HTTP client
-        └── store/             # Zustand stores
+        ├── lib/api.ts        # URL selection + fetch
+        ├── lib/haptics.ts    # Web-safe haptics
+        └── store/
 ```
 
 ---
 
-## Getting started (end user setup)
-
-Follow these steps after cloning the repository from GitHub.
+## Quick start
 
 ### Prerequisites
 
-| Tool | Version | Purpose |
-|------|---------|---------|
-| **Git** | any recent | Clone the repo |
-| **Docker Desktop** (or Docker Engine + Compose) | 24+ recommended | Run API in container (Option A) |
-| **Node.js** | 18+ (22 recommended) | Mobile app and optional local API |
-| **npm** | 9+ | Package installs |
-| **Expo Go** (phone) or emulator | — | Run the mobile client |
+| Tool | Purpose |
+|------|---------|
+| **Node.js 18+** (22 recommended) | Mobile + optional local API |
+| **Docker Desktop** (optional) | Containerized API |
+| **Expo Go** on your phone | [iOS](https://apps.apple.com/app/expo-go/id982107779) / [Android](https://play.google.com/store/apps/details?id=host.exp.exponent) — must be **SDK 54** |
+| Same Wi‑Fi | Phone and PC for Expo Go + LAN API |
+
+### 1. Clone and install
+
+```bash
+git clone <your-repo-url>
+cd viridien_project_intelligent_bistro
+
+cd backend && npm install && cd ..
+cd mobile && npm install && cd ..
+```
+
+### 2. Start the API
+
+**Docker:**
+
+```bash
+cp backend/.env.example backend/.env
+# optional: add OPENAI_API_KEY to backend/.env
+
+docker compose up --build -d
+```
+
+**Or local Node:**
+
+```bash
+cd backend
+cp .env.example .env
+npm run dev
+```
+
+Verify:
+
+```bash
+curl http://localhost:3001/health
+```
+
+### 3. Start the mobile app
+
+```bash
+cd mobile
+npx expo start --clear
+```
+
+Then use **Expo Go** (phone) or press **`w`** for web — see sections below.
 
 ---
 
-### Option A: Docker (recommended for API)
+## Running on Expo Go (physical phone)
 
-Docker runs only the **backend API**. The Expo mobile app still runs on your machine (or device) because it requires the Metro bundler and Expo Go for the best dev experience.
+### Step 1 — Install Expo Go
 
-#### Step 1 — Clone the repository
+Install **Expo Go** from the App Store (iOS) or Play Store (Android).  
+This project uses **Expo SDK 54** — your Expo Go app must support SDK 54 (current App Store version).
 
-```bash
-git clone https://github.com/YOUR_USERNAME/viridien_project_intelligent_bistro.git
-cd viridien_project_intelligent_bistro
+### Step 2 — Configure your PC’s LAN IP
+
+On Windows (PowerShell):
+
+```powershell
+ipconfig
 ```
 
-Replace the URL with your actual GitHub remote.
+Find **Wireless LAN adapter Wi‑Fi** → **IPv4 Address** (e.g. `192.168.1.42`).
 
-#### Step 2 — Configure environment (optional OpenAI)
+> **Do not use** VirtualBox (`192.168.56.x`) or Docker-only adapters — your phone cannot reach those.
+
+Edit `mobile/app.json`:
+
+```json
+"extra": {
+  "apiUrlLocal": "http://localhost:3001",
+  "apiUrlDevice": "http://YOUR_WIFI_IPV4:3001"
+}
+```
+
+Example:
+
+```json
+"apiUrlDevice": "http://192.168.1.42:3001"
+```
+
+### Step 3 — How the app picks the URL
+
+`mobile/src/lib/api.ts` (uses `expo-device`):
+
+| Environment | URL used |
+|-------------|----------|
+| Web browser on PC | `apiUrlLocal` → `localhost` |
+| **Physical phone** (Expo Go) | `apiUrlDevice` → your LAN IP |
+| Android emulator | `http://10.0.2.2:3001` |
+| iOS Simulator | `apiUrlLocal` → `localhost` |
+
+### Step 4 — Start Expo and scan QR
+
+```bash
+cd mobile
+npx expo start --clear
+```
+
+1. Phone and PC on the **same Wi‑Fi** (not guest network).
+2. Open **Expo Go** → scan the QR code from the terminal.
+3. Wait for the bundle to load.
+
+### Step 5 — Verify API from the phone (critical)
+
+On the phone, open **Safari** (iOS) or **Chrome** (Android):
+
+```text
+http://YOUR_WIFI_IPV4:3001/health
+```
+
+You should see JSON: `{"status":"ok",...}`.
+
+- If Safari **cannot** load this → fix firewall/IP/Wi‑Fi before debugging the app.
+- If Safari **can** load it → restart Expo (`--clear`) and reload the app in Expo Go.
+
+### Step 6 — Windows Firewall
+
+Allow inbound **TCP 3001** or allow **Docker Desktop** / **Node.js** on **Private** networks.
+
+### Step 7 — Use the app
+
+1. **Menu** — pull to refresh; items load from API.
+2. **AI** — try: `Add two spicy chicken sandwiches and a large water`.
+3. **Cart** — confirm lines and totals.
+
+If the menu fails, the error banner shows the **API URL** the app attempted.
+
+---
+
+## Running on laptop (web browser)
+
+Best for quick UI checks on Windows:
+
+```bash
+# Terminal 1 — API
+docker compose up -d
+# or: cd backend && npm run dev
+
+# Terminal 2 — Web
+cd mobile
+npx expo start --web --clear
+```
+
+Open **http://localhost:8081**. The app uses `apiUrlLocal` (`localhost:3001`) automatically.
+
+> Haptics are disabled on web (no crash). Use a physical device to feel haptic feedback.
+
+---
+
+## API URL configuration (laptop + phone)
+
+Set **both** URLs in `mobile/app.json` so you rarely need to switch manually:
+
+```json
+"extra": {
+  "apiUrlLocal": "http://localhost:3001",
+  "apiUrlDevice": "http://192.168.1.42:3001"
+}
+```
+
+After any `app.json` change:
+
+```bash
+npx expo start --clear
+```
+
+Reload Expo Go (shake device → **Reload**).
+
+---
+
+## OpenAI API key setup and verification
+
+### Setup
 
 ```bash
 cp backend/.env.example backend/.env
@@ -391,134 +412,93 @@ OPENAI_API_KEY=sk-your-key-here
 OPENAI_MODEL=gpt-4o-mini
 ```
 
-- Leave `OPENAI_API_KEY` empty to use the **rule-based parser** (no external calls).
-- Never commit `.env` files (they are gitignored).
-
-Alternatively, for Compose variable substitution from the repo root:
+Restart Docker after changes:
 
 ```bash
-cp .env.example .env
-# Edit OPENAI_API_KEY in .env
+docker compose down && docker compose up -d
 ```
 
-#### Step 3 — Build and start the API container
+Logs should show: `AI mode: OpenAI`
+
+### Verify (Git Bash / macOS / Linux)
+
+```bash
+# Key loaded?
+curl http://localhost:3001/health
+# expect: "ai":"openai"
+
+# OpenAI actually used?
+curl -s -X POST http://localhost:3001/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"Add a large water"}'
+# expect: "parsedBy":"openai"
+```
+
+### Verify (PowerShell)
+
+```powershell
+Invoke-RestMethod http://localhost:3001/health
+```
+
+| Result | Meaning |
+|--------|---------|
+| `"ai":"openai"` | Key is loaded in the running process |
+| `"ai":"rules"` | No key in `backend/.env` or container not restarted |
+| `"parsedBy":"openai"` on `/api/chat` | OpenAI call succeeded |
+| `"parsedBy":"rules"` + offline message in `reply` | Key invalid, billing issue, or API error → fallback |
+
+**Important:** Put the key in **`backend/.env`**, not only a root `.env`. Docker reads `backend/.env` via `env_file`.
+
+---
+
+## Docker
+
+Docker packages **only the backend API**.
+
+```bash
+# Build and start
+docker compose up --build -d
+
+# Status
+docker compose ps
+
+# Logs (follow)
+docker compose logs -f api
+
+# Stop
+docker compose down
+```
+
+### Rebuild when backend code changes
 
 ```bash
 docker compose up --build -d
 ```
 
-Verify:
+Mobile changes do **not** require a Docker rebuild — restart Expo only.
 
-```bash
-docker compose ps
-curl http://localhost:3001/health
-```
+### What Docker does not run
 
-Expected: `"status":"ok"`.
-
-Stop the API:
-
-```bash
-docker compose down
-```
-
-View logs:
-
-```bash
-docker compose logs -f api
-```
-
-#### Step 4 — Run the mobile app
-
-See [Connecting the mobile app](#connecting-the-mobile-app-to-your-api) below, then:
-
-```bash
-cd mobile
-npm install
-npm start
-```
-
-Scan the QR code with **Expo Go**.
-
----
-
-### Option B: Local Node.js (full stack)
-
-Use this if you prefer not to install Docker, or want hot-reload on the API.
-
-#### Step 1 — Clone
-
-Same as Option A, Step 1.
-
-#### Step 2 — Backend
-
-```bash
-cd backend
-cp .env.example .env
-# Edit .env if you want OpenAI
-npm install
-npm run dev
-```
-
-API listens on **http://localhost:3001** with file watching via `tsx`.
-
-Production-style run (compile + node):
-
-```bash
-npm run build
-npm start
-```
-
-#### Step 3 — Mobile (new terminal)
-
-```bash
-cd mobile
-npm install
-npm start
-```
-
----
-
-## Connecting the mobile app to your API
-
-The app reads `expo.extra.apiUrl` from `mobile/app.json` (default `http://localhost:3001`).
-
-| Scenario | `apiUrl` to use |
-|----------|-----------------|
-| iOS Simulator / Expo web on same PC | `http://localhost:3001` |
-| Android Emulator | Auto: `http://10.0.2.2:3001` (handled in `src/lib/api.ts`) |
-| Physical phone (same Wi‑Fi as PC) | `http://<YOUR_LAN_IP>:3001` e.g. `http://192.168.1.42:3001` |
-| API in Docker on PC, phone on LAN | `http://<YOUR_LAN_IP>:3001` (Docker publishes port to host) |
-
-**To change the URL**, edit `mobile/app.json`:
-
-```json
-"extra": {
-  "apiUrl": "http://192.168.1.42:3001"
-}
-```
-
-Restart Expo after changing (`r` in terminal or stop/start `npm start`).
-
-**Firewall:** Allow inbound TCP **3001** on your development machine when testing from a phone.
-
-**Verify connectivity** from the phone browser (optional): open `http://<LAN_IP>:3001/health` — you should see JSON.
+The Expo mobile app is **not** in Docker. Run it with `npx expo start` on your host machine.
 
 ---
 
 ## Environment variables
 
-### Backend / Docker (`backend/.env` or root `.env`)
+### Backend (`backend/.env`)
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `PORT` | no | `3001` | HTTP listen port |
-| `OPENAI_API_KEY` | no | — | Enables OpenAI parsing when set |
-| `OPENAI_MODEL` | no | `gpt-4o-mini` | Chat model name |
+| `PORT` | no | `3001` | HTTP port |
+| `OPENAI_API_KEY` | no | — | Enables OpenAI when set |
+| `OPENAI_MODEL` | no | `gpt-4o-mini` | Model name |
 
-### Mobile
+### Mobile (`mobile/app.json` → `expo.extra`)
 
-Configured in `app.json` → `expo.extra.apiUrl` (not via `.env` in this repo).
+| Key | Purpose |
+|-----|---------|
+| `apiUrlLocal` | Laptop browser / iOS Simulator |
+| `apiUrlDevice` | Physical phone on Wi‑Fi (your PC’s IPv4) |
 
 ---
 
@@ -528,26 +508,27 @@ Configured in `app.json` → `expo.extra.apiUrl` (not via `.env` in this repo).
 
 | Command | Description |
 |---------|-------------|
-| `npm run dev` | Dev server with hot reload (`tsx watch`) |
-| `npm run build` | Compile TypeScript to `dist/` |
-| `npm start` | Run compiled `dist/index.js` |
+| `npm run dev` | Dev server with hot reload |
+| `npm run build` | Compile TypeScript |
+| `npm start` | Run `dist/index.js` |
 
 ### Mobile
 
 | Command | Description |
 |---------|-------------|
-| `npm start` | Start Expo dev server |
-| `npm run android` | Open Android emulator |
-| `npm run ios` | Open iOS simulator (macOS only) |
-| `npm run web` | Run in browser |
+| `npx expo start` | Dev server + QR for Expo Go |
+| `npx expo start --clear` | Clear Metro cache (use after config changes) |
+| `npx expo start --web` | Open in browser |
+| `npm run android` | Android emulator |
+| `npm run ios` | iOS Simulator (macOS only) |
 
 ### Docker
 
 | Command | Description |
 |---------|-------------|
-| `docker compose up --build -d` | Build image and start API |
-| `docker compose down` | Stop and remove container |
-| `docker compose logs -f api` | Stream API logs |
+| `docker compose up --build -d` | Build + start API |
+| `docker compose logs -f api` | Stream logs |
+| `docker compose down` | Stop API |
 
 ---
 
@@ -555,25 +536,30 @@ Configured in `app.json` → `expo.extra.apiUrl` (not via `.env` in this repo).
 
 | Problem | Likely cause | Fix |
 |---------|--------------|-----|
-| Mobile shows "Could not reach the kitchen API" | Wrong `apiUrl` or API not running | Start API; set LAN IP on physical device |
-| Docker build fails on `npm ci` | Missing lockfile | Run `npm install` in `backend/` and commit `package-lock.json` |
-| OpenAI always falls back to rules | Invalid key, billing, or network | Check `OPENAI_API_KEY`; read API logs |
-| `parsedBy: "rules"` despite key set | Key not passed into container | Set `backend/.env` or root `.env` for Compose |
-| Android emulator can't reach API | Uses wrong host | App uses `10.0.2.2` automatically — don't use `localhost` in `app.json` for emulator |
-| Port 3001 in use | Another process | Change `PORT` in `.env` and `docker-compose.yml` port mapping |
+| Expo Go: SDK mismatch | Old project SDK vs new Expo Go | Project is on **SDK 54** — run `cd mobile && npm install` |
+| "Could not reach the kitchen API" on phone | Wrong IP in `apiUrlDevice` | Use **Wi‑Fi** IPv4 from `ipconfig`, not VirtualBox `192.168.56.x` |
+| Phone browser can't open `/health` | Firewall or different Wi‑Fi | Same network; allow port 3001; disable VPN |
+| Web works, phone doesn't | `localhost` on phone = phone itself | Set `apiUrlDevice` to LAN IP |
+| `"ai":"rules"` despite `.env` key | Docker not restarted or empty override | `docker compose down && docker compose up -d`; check logs for `AI mode: OpenAI` |
+| `parsedBy:"rules"` with key set | Invalid key / no billing | Test key at platform.openai.com; check `docker compose logs api` |
+| Web: Metro 500 / MIME error | Babel misconfiguration | Use project's `babel.config.js`; `npx expo start --web --clear` |
+| Web: Haptics crash | `expo-haptics` on web | Fixed via `src/lib/haptics.ts` — pull latest |
+| Docker pipe error | Docker Desktop not running | Start Docker Desktop |
+| Android emulator API | Wrong host | App auto-uses `10.0.2.2:3001` |
 
----
+### Find your correct Wi‑Fi IP (Windows)
 
-## Submission / demo checklist
+```powershell
+ipconfig
+```
 
-For the Viridien internship Loom (≈5 minutes):
+Use **Wireless LAN adapter Wi‑Fi** → **IPv4 Address**.
 
-1. **Menu tab** — Categories, add to cart, visual polish.
-2. **AI tab** — Natural language order; show cart updating; tap suggestion chips.
-3. **Cart tab** — Quantity controls, subtotal/tax, checkout CTA.
-4. **Code tour** — `ruleBasedParser.ts`, `aiService.ts`, `cartStore.ts`, `assistant.tsx`.
-5. **Setup mention** — Docker `docker compose up`, optional OpenAI key, Expo Go.
-6. **Tools** — Cursor / Copilot / etc. used to build the project.
+### Test from phone browser first
+
+```text
+http://<YOUR_WIFI_IPV4>:3001/health
+```
 
 ---
 
@@ -581,11 +567,11 @@ For the Viridien internship Loom (≈5 minutes):
 
 | Layer | Technologies |
 |-------|----------------|
-| Mobile UI | React Native 0.76, Expo 52, Expo Router 4, NativeWind 4, Tailwind CSS 3 |
-| Mobile state | Zustand 5 |
-| Backend | Express 4, TypeScript 5, Zod 3, dotenv, cors |
-| AI | OpenAI Chat Completions (`gpt-4o-mini` default), custom rule-based NLP |
-| DevOps | Docker multi-stage build, Docker Compose v2, health checks |
+| Mobile | Expo **SDK 54**, React Native **0.81**, React **19**, Expo Router **6**, NativeWind **4** |
+| Mobile state | Zustand 5, expo-device, expo-haptics (native only) |
+| Backend | Express 4, TypeScript 5, Zod 3, OpenAI SDK |
+| AI | `gpt-4o-mini` (optional) + rule-based NLP fallback |
+| DevOps | Docker multi-stage build, Docker Compose, health checks |
 
 ---
 
