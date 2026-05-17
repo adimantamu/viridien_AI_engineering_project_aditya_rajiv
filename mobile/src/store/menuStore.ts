@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { fetchMenu } from "../lib/api";
+import { fetchMenu, getApiUrl } from "../lib/api";
 import type { MenuItem } from "../types";
 
 interface MenuState {
@@ -26,8 +26,9 @@ export const useMenuStore = create<MenuState>((set, get) => ({
       const items = await fetchMenu();
       set({ items, loaded: true, loading: false });
     } catch (e) {
+      const detail = e instanceof Error ? e.message : "Failed to load menu";
       set({
-        error: e instanceof Error ? e.message : "Failed to load menu",
+        error: `${detail}\n\nAPI: ${getApiUrl()}`,
         loading: false,
       });
     }

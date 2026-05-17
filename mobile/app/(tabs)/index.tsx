@@ -66,7 +66,9 @@ export default function MenuScreen() {
         {error ? (
           <View className="mb-4 rounded-xl border border-bistro-accent/50 bg-bistro-card p-4">
             <Text className="text-bistro-cream">Could not reach the kitchen API.</Text>
-            <Text className="mt-1 text-sm text-bistro-muted">{error}</Text>
+            <Text className="mt-1 text-sm text-bistro-muted" selectable>
+              {error}
+            </Text>
             <Pressable onPress={loadMenu} className="mt-3">
               <Text className="font-medium text-bistro-gold">Tap to retry</Text>
             </Pressable>

@@ -1,17 +1,43 @@
 import Constants from "expo-constants";
+import * as Device from "expo-device";
 import { Platform } from "react-native";
 import type { CartLine, ChatMessage, ChatResponse, MenuItem } from "../types";
 
-function getApiBaseUrl(): string {
-  const configured = Constants.expoConfig?.extra?.apiUrl as string | undefined;
-  if (configured && !configured.includes("localhost")) {
-    return configured;
+type ApiExtra = {
+  apiUrl?: string;
+  apiUrlLocal?: string;
+  apiUrlDevice?: string;
+};
+
+function getExtra(): ApiExtra {
+  return (Constants.expoConfig?.extra ?? {}) as ApiExtra;
+}
+
+/**
+ * Picks API base URL from app.json extra:
+ * - apiUrlLocal  → laptop browser, iOS Simulator (http://localhost:3001)
+ * - apiUrlDevice → physical phone on same Wi‑Fi (http://YOUR_LAN_IP:3001)
+ *
+ * Update apiUrlDevice to your PC's IPv4 from `ipconfig` (Wi‑Fi adapter).
+ */
+export function getApiBaseUrl(): string {
+  const extra = getExtra();
+  const local = extra.apiUrlLocal ?? extra.apiUrl ?? "http://localhost:3001";
+  const device = extra.apiUrlDevice ?? local;
+
+  if (Platform.OS === "web") {
+    return local;
   }
-  // Android emulator uses 10.0.2.2 for host machine localhost
-  if (Platform.OS === "android") {
+
+  if (Platform.OS === "android" && !Device.isDevice) {
     return "http://10.0.2.2:3001";
   }
-  return configured ?? "http://localhost:3001";
+
+  if (Device.isDevice) {
+    return device;
+  }
+
+  return local;
 }
 
 const API_BASE = getApiBaseUrl();

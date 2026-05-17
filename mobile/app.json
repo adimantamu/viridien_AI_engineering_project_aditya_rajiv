@@ -15,7 +15,12 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.viridien.intelligentbistro"
+      "bundleIdentifier": "com.viridien.intelligentbistro",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -34,7 +39,8 @@
       "typedRoutes": true
     },
     "extra": {
-      "apiUrl": "http://localhost:3001"
+      "apiUrlLocal": "http://localhost:3001",
+      "apiUrlDevice": "http://172.17.136.253:3001"
     }
   }
 }
