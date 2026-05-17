@@ -51,6 +51,14 @@ export interface OrderAction {
   orderNumber?: number;
 }
 
+export interface ClientOrderLineSnapshot {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  modifiers?: Record<string, string>;
+}
+
 export interface ClientOrderSnapshot {
   id: string;
   orderNumber: number;
@@ -58,6 +66,7 @@ export interface ClientOrderSnapshot {
   total: number;
   itemCount: number;
   createdAt: number;
+  lines: ClientOrderLineSnapshot[];
 }
 
 export interface ChatRequest {

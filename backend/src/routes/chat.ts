@@ -36,6 +36,15 @@ const ChatBodySchema = z.object({
         total: z.number(),
         itemCount: z.number(),
         createdAt: z.number(),
+        lines: z.array(
+          z.object({
+            name: z.string(),
+            quantity: z.number(),
+            unitPrice: z.number(),
+            lineTotal: z.number(),
+            modifiers: z.record(z.string()).optional(),
+          }),
+        ),
       }),
     )
     .optional(),

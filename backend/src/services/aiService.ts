@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { getMenuCatalogForPrompt, MENU_ITEMS } from "../data/menu.js";
 import type { CartAction, ChatRequest, ChatResponse, OrderAction } from "../types/index.js";
+import { orderDetailReply } from "./orderParser.js";
 import { parseWithRules } from "./ruleBasedParser.js";
 
 const CartActionSchema = z.object({
@@ -26,7 +27,6 @@ const AiResponseSchema = z.object({
 });
 
 const SYSTEM_PROMPT = `You are the AI maître d' for "The Intelligent Bistro", a premium restaurant ordering assistant.
-Parse the user's message into cart actions and/or order actions.
 Return valid JSON: reply, actions (cart), orderActions (optional), suggestions (optional).
 
 Cart action types:
@@ -35,20 +35,37 @@ Cart action types:
 - UPDATE_QUANTITY: itemId, quantity
 - CLEAR: no other fields
 
-Order action types (use when user wants to cancel placed orders):
+Order action types:
 - CANCEL_ORDER: orderId and/or orderNumber from the orders list in context
 - CANCEL_ALL_ORDERS: cancel every active (placed) order
 
 Rules:
-- Match informal language; infer modifiers from context
-- Never invent menu item ids
-- For order cancellation, use orderNumber from the provided orders list
-- If user asks to place order, tell them to use Place order on the Cart tab (orders are placed in the app UI)
+- Answer menu questions conversationally (starters, mains, prices, recommendations) using the MENU CATALOG — actions may be empty for pure Q&A
+- Parse messy natural language: "Add 2 sandwiches. And some sparkling water. About two waters" → multiple ADD actions; prefer the final quantity when the user corrects themselves
+- Match informal language; infer modifiers (size, spice, doneness) from context
+- Never invent menu item ids — only use ids from the catalog
+- When listing order or cart items, include EVERY line with quantity, name, and price
+- If user asks to place order, tell them to use Place order on the Cart tab
 
 MENU CATALOG:
 `;
 
+export function isOpenAiConfigured(): boolean {
+  return Boolean(process.env.OPENAI_API_KEY?.trim());
+}
+
 export async function processChatMessage(request: ChatRequest): Promise<ChatResponse> {
+  const orderDetail = orderDetailReply(request);
+  if (orderDetail) {
+    return {
+      reply: orderDetail,
+      actions: [],
+      orderActions: [],
+      suggestions: ["Cancel my last order", "Show my orders", "View cart"],
+      parsedBy: "rules",
+    };
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
 
   if (!apiKey) {
@@ -62,7 +79,11 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
       : "";
 
     const ordersContext = request.orders?.length
-      ? `\nActive orders: ${JSON.stringify(request.orders)}`
+      ? `\nPlaced orders (include every line when listing):\n${JSON.stringify(
+          request.orders.filter((o) => o.status === "placed"),
+          null,
+          2,
+        )}`
       : "";
 
     const historyText =
@@ -100,12 +121,9 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
       suggestions: parsed.suggestions,
       parsedBy: "openai",
     };
-  } catch {
-    const fallback = parseWithRules(request);
-    return {
-      ...fallback,
-      reply: `${fallback.reply} (Using offline parser — set OPENAI_API_KEY for full AI.)`,
-    };
+  } catch (error) {
+    console.error("[chat] OpenAI failed, using rule-based parser:", error);
+    return parseWithRules(request);
   }
 }
 
