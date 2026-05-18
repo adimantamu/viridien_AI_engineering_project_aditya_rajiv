@@ -16,25 +16,31 @@ The repository is a **monorepo** with two parts:
 ## Table of contents
 
 1. [What this project does](#what-this-project-does)
-2. [Latest developments (May 2026)](#latest-developments-may-2026)
-3. [Recent changes and implementation notes](#recent-changes-and-implementation-notes)
-4. [System architecture](#system-architecture)
-5. [AI design and specifications](#ai-design-and-specifications)
-6. [Data models and cart logic](#data-models-and-cart-logic)
-7. [API reference](#api-reference)
-8. [Repository structure](#repository-structure)
-9. [Quick start](#quick-start)
-10. [Running on Expo Go (physical phone)](#running-on-expo-go-physical-phone)
-11. [Running on laptop (web browser)](#running-on-laptop-web-browser)
-12. [Voice input (web — Edge / Chrome)](#voice-input-web--edge--chrome)
-13. [API URL configuration (laptop + phone)](#api-url-configuration-laptop--phone)
-14. [OpenAI API key setup and verification](#openai-api-key-setup-and-verification)
-15. [Docker](#docker)
-16. [Environment variables](#environment-variables)
-17. [Development commands](#development-commands)
-18. [Troubleshooting](#troubleshooting)
-19. [Tech stack summary](#tech-stack-summary)
-20. [License](#license)
+2. [Latest developments (18 May 2026)](#latest-developments-18-may-2026)
+3. [Earlier developments (15 May 2026)](#earlier-developments-15-may-2026)
+4. [Challenges, solutions, and lessons learned](#challenges-solutions-and-lessons-learned)
+5. [Future scope](#future-scope)
+6. [Deployment next steps](#deployment-next-steps)
+7. [Scalability and production hardening](#scalability-and-production-hardening)
+8. [Recent changes and implementation notes](#recent-changes-and-implementation-notes)
+9. [System architecture](#system-architecture)
+10. [AI design and specifications](#ai-design-and-specifications)
+11. [Data models and cart logic](#data-models-and-cart-logic)
+12. [API reference](#api-reference)
+13. [Repository structure](#repository-structure)
+14. [Quick start](#quick-start)
+15. [Running on Expo Go (physical phone)](#running-on-expo-go-physical-phone)
+16. [Running on laptop (web browser)](#running-on-laptop-web-browser)
+17. [Voice input (web + Expo Go)](#voice-input-web--expo-go)
+18. [API URL configuration (laptop + phone)](#api-url-configuration-laptop--phone)
+19. [OpenAI API key setup and verification](#openai-api-key-setup-and-verification)
+20. [Docker](#docker)
+21. [Environment variables](#environment-variables)
+22. [Development commands](#development-commands)
+23. [Troubleshooting](#troubleshooting)
+24. [Tech stack summary](#tech-stack-summary)
+25. [Session notes and documentation](#session-notes-and-documentation)
+26. [License](#license)
 
 ---
 
@@ -43,36 +49,88 @@ The repository is a **monorepo** with two parts:
 ### User-facing capabilities
 
 - **Menu browsing** — **30+ items** across seven categories (Starters, Mains, Bowls, Salads, Sides, Drinks, Desserts), each with **at least four dishes**, descriptions, tags, and prices.
-- **Manual cart management** — Add from menu cards; increment, decrement, or remove lines on the Cart tab.
+- **Manual cart management** — Add from menu cards with **size selection** (Small / Medium / Large); change size on the Cart tab; increment, decrement, or remove lines.
 - **Orders tab** — View placed orders, line items, and totals; cancel from the UI or via chat.
 - **AI maître d'** — Natural-language ordering with structured cart and order actions:
-  - **Add / remove / update** items with smart quantity parsing (digits and words: *seven*, *dozen*, *3 in quantity*, *of quantity 6*).
+  - **Add / remove / update / resize** items with smart quantity and **size** parsing (digits and words: *seven*, *dozen*, *two large waters*, *change burger to small*).
+  - **Compound multi-item orders** — *"4 sandwiches and 7 burgers with 3 lemonades"* parsed as separate lines (OpenAI-first when key is set).
+  - **Rich menu browse** — Category cards with tappable **Add** rows; multi-category (*"starters and bowls"*).
   - **Cancel orders** — *"Cancel my last order"* actually cancels (does not only list items).
   - **Place order with confirmation** — *"Place order"* shows a full summary → reply **yes** to checkout or **no** to keep editing.
   - **Large quantity guard** — Quantities over **10** of one item are held for confirmation (e.g. add burgers now, confirm 40× water separately).
   - **Category suggestions** — *"What are your bowls?"* / *"Suggestions for desserts"* lists only that category.
   - **Meal coaching** — After adds, suggests pairings; flags missing drinks/sides/desserts in the cart.
   - **Warm greeting** — First visit to the AI tab shows featured dishes and prompts.
-- **Voice input (web)** — Speak orders in **Microsoft Edge** or **Chrome** on desktop (`localhost:8081`); live transcript in the input field.
-- **Modifiers** — Size (water), spice level (sandwich), protein add-ons (salad), etc., inferred from text or defaulted sensibly.
+- **Voice input** — **Web:** Edge/Chrome live speech on `localhost:8081`. **Expo Go (iPhone/Android):** record → **Whisper** via `POST /api/transcribe`.
+- **Modifiers** — **Size on every dish** (category-based price deltas); spice level (sandwich), doneness (burger), etc., inferred from text or defaulted to **Medium**.
 - **Premium UI** — Dark bistro palette (gold/cream on charcoal), haptic feedback on native devices, tab navigation (Menu, AI, Cart, Orders).
 
 ### Engineering goals demonstrated
 
 - Separation of **presentation** (mobile) from **intent parsing** (backend).
 - **Structured AI output** (JSON actions) rather than free-text-only responses.
-- **Rules-first AI** with optional OpenAI polish; full ordering works without an API key.
+- **OpenAI-first cart parsing** with rules fallback and **reconcile** anti-hallucination layer; full ordering works without an API key.
+- **Automated validation** — `npm run validate:parser` (19 cases) and `npm run validate:ai` (23 cases).
 - Production-minded touches: Zod validation, TypeScript throughout, Dockerized API, health checks.
 
 ---
 
-## Latest developments (May 2026)
+## Latest developments (18 May 2026)
+
+Final demo polish: **sizes on all dishes**, **OpenAI-first cart parsing**, **iOS chat UI fixes**, **Expo Go voice (Whisper)**, and **cart hallucination** fixes. Full session log: [`docs/SESSION_NOTES_2026-05-18.md`](docs/SESSION_NOTES_2026-05-18.md).
+
+### Size modifiers (every dish)
+
+| Layer | Detail |
+|-------|--------|
+| **Catalog** | `menuModifiers.ts` — Small / Medium / Large per category with `priceDelta` |
+| **Manual UI** | `SizeSelector` on Menu + Cart; live price on `MenuItemCard` |
+| **AI** | ADD/REMOVE with size; `SET_MODIFIER` (*change burger to large*); size price Q&A |
+| **Default** | Medium when guest does not specify a size |
+
+### OpenAI-first cart parsing
+
+When `OPENAI_API_KEY` is set, cart mutations use a **dedicated parser** (`openaiCartActions.ts`) before rules:
+
+1. GPT-4o (JSON mode, temperature 0) maps the guest message → `CartAction[]`
+2. **`reconcileAiCartActions()`** strips hallucinated re-adds of items already in cart
+3. Rules parser remains **fallback** and **safety net** for offline / API errors
+
+**Critical fix:** Sending cart context previously caused *"Add lemonade"* to re-add **every cart line**. Reconcile + prompt guardrails now keep only items **named in the current message**.
+
+### Compound orders and *with* clauses
+
+- `expandWithClauses()` — *"7 burgers with 3 lemonades"* → separate add segments
+- Validation: `npm run validate:parser` includes multi-item + reconcile cases (**19/19**)
+
+### iOS / Expo Go chat UI
+
+- Removed `flex-1` stretch on chat `ScrollView` content (empty giant cards)
+- Recommendation rows: layout on inner `View`; max-height scroll for dish lists
+- Text bubble separate from recommendation card — later messages stay visible
+
+### Voice on Expo Go
+
+- `useVoiceInput.native.ts` — record with `expo-av` → `POST /api/transcribe` (Whisper)
+- `GET /health` → `"voice": "whisper"` when key is configured
+
+### Validation suite
+
+```bash
+cd backend
+npm run validate:parser   # 19 tests
+npm run validate:ai         # 23 tests
+```
+
+---
+
+## Earlier developments (15 May 2026)
 
 Major upgrade to the **AI ordering engine**, **menu catalog**, **order lifecycle**, and **web voice input**. Detailed dev log: [`docs/SESSION_NOTES_2026-05-15.md`](docs/SESSION_NOTES_2026-05-15.md).
 
-### Intelligent AI ordering (rules-first)
+### Intelligent AI ordering (structured rules)
 
-The backend now runs a **structured chat pipeline** before (and as fallback to) OpenAI:
+The backend runs a **structured chat pipeline** for orders, menu Q&A, and confirmations (OpenAI enriches when rules return null):
 
 | Capability | Example | Behavior |
 |------------|---------|----------|
@@ -121,7 +179,79 @@ Response may include `placeOrderFromCart: true` and updated `sessionContext`.
 - Web Speech API in `mobile/src/lib/webSpeechRecognition.ts`
 - **Microsoft Edge** and **Chrome** on desktop; use **`http://localhost:8081`** (mic blocked on raw LAN IP URLs)
 - Serialized stop/start, auto-reconnect on transient errors
-- **Expo Go on phone:** type orders in AI tab (no native speech module in Expo Go)
+
+---
+
+## Challenges, solutions, and lessons learned
+
+| Challenge | Symptom | Solution |
+|-----------|---------|----------|
+| **iOS chat layout** | Starter / recommendation card filled the screen; messages hidden | No `flexGrow` on scroll content; `flexGrow: 0` on bubbles; nested scroll + inner `View` row layout |
+| **OpenAI cart hallucination** | *"Add lemonade"* re-added every item already in cart | Cart context marked read-only in prompt; `reconcileAiCartActions()` vs rules parser |
+| **With-clause parsing** | *"7 burgers with 3 lemonades"* → 7 lemonades, burgers skipped | `expandWithClauses()` + OpenAI examples + reconcile tests |
+| **Rules before OpenAI** | Complex orders failed despite API key | `resolveCartActions()` — OpenAI first, rules fallback |
+| **Expo Go voice** | No Web Speech on device | Native record → `POST /api/transcribe` (Whisper) |
+| **Pressable on iOS** | Add buttons stacked as full-width bars | Layout styles on child `View`, not on `Pressable` |
+
+**Lesson:** Always **cross-check** LLM cart output against deterministic rules for the **current message only** — never trust cart snapshot context as implicit ADD intent.
+
+---
+
+## Future scope
+
+- **Payments** — Stripe / Apple Pay after place-order confirmation
+- **Kitchen display** — Real-time order queue for staff (WebSocket)
+- **Accounts** — Server-side cart, order history, favorites
+- **Rich modifiers** — Toppings, allergies, special instructions
+- **Analytics** — Parse success rates, popular pairings, voice vs text
+- **i18n** — Multi-language menu and prompts
+- **Embedding search** — Fuzzy menu match when catalog grows beyond ~100 items
+
+---
+
+## Deployment next steps
+
+### 1. Backend (API)
+
+1. Build and push Docker image to your registry (Fly.io, Railway, Render, AWS ECS, Azure Container Apps).
+2. Set production secrets: `OPENAI_API_KEY`, `OPENAI_MODEL` (recommend **`gpt-4o`** for demo accuracy).
+3. Expose **HTTPS**; restrict CORS to your app origin (replace dev `origin: true`).
+4. Smoke test: `GET /health`, `POST /api/chat`, `POST /api/transcribe`.
+
+### 2. Mobile
+
+1. Configure production API URL in `app.json` / EAS secrets (not `localhost`).
+2. `eas build --platform ios` / `android` for TestFlight or internal testing.
+3. Optional: `npx expo export --platform web` for browser kiosk demo.
+
+### 3. CI / quality gate
+
+```bash
+cd backend && npm run build && npm run validate:parser && npm run validate:ai
+cd mobile && npx tsc --noEmit
+```
+
+### 4. Operations
+
+- Log `parsedBy`, latency, and OpenAI errors
+- Rate-limit `/api/chat` and `/api/transcribe`
+- Monitor OpenAI spend and set billing alerts
+
+---
+
+## Scalability and production hardening
+
+| Area | MVP (now) | Scale path |
+|------|-----------|------------|
+| **API** | Single Node container, stateless | Horizontal replicas behind load balancer |
+| **State** | Cart/orders on client; session hints in request | Redis + user accounts + server cart |
+| **Menu** | In-memory TypeScript catalog | CMS / PostgreSQL + CDN cache |
+| **AI cart** | Sync OpenAI per message | Queue workers; cache category browse; tiered models |
+| **Voice** | Whisper per upload | Streaming STT; upload size limits |
+| **Parsing** | Rules + reconcile + OpenAI | CI golden tests; shadow-mode parser comparison |
+| **Mobile** | Expo Go / dev builds | EAS production + OTA for UI-only updates |
+
+The API is **stateless** today — scaling out is mostly duplicate containers + shared secrets. Add sticky sessions only if server-side chat state moves off the client.
 
 ---
 
@@ -129,15 +259,18 @@ Response may include `placeOrderFromCart: true` and updated `sessionContext`.
 
 | Area | Detail |
 |------|--------|
-| **Structured chat** | `chatOrchestrator.ts`, `mealSuggestions.ts`, `messageNormalizer.ts`, `orderParser.ts` |
+| **Sizes** | `menuModifiers.ts`, `sizeParser.ts`, `SizeSelector.tsx`, `SET_MODIFIER` |
+| **OpenAI cart** | `openaiCartActions.ts`, `reconcileAiCartActions()` |
+| **Structured chat** | `chatOrchestrator.ts` (async), `mealSuggestions.ts`, `menuBrowseResolver.ts` |
 | **Orders on client** | Zustand `ordersStore`; AI cancel + place-order flows |
-| **Menu ~30 items** | `backend/src/data/menu.ts` — 4+ per category |
+| **Menu ~30 items** | `backend/src/data/menu.ts` — 4+ per category, all with size options |
 | **Expo SDK 54** | Matches current **Expo Go** on the App Store |
 | **Dual API URLs** | `apiUrlLocal` + `apiUrlDevice` in `app.json`; auto-selected in `api.ts` |
 | **Docker + OpenAI** | `env_file: backend/.env` — no empty host override for `OPENAI_API_KEY` |
-| **Web voice** | `useVoiceInput.web.ts` + `webSpeechRecognition.ts` (Edge/Chrome) |
-| **Web haptics** | `src/lib/haptics.ts` no-ops on web |
-| **Session notes** | [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md) · [May 2026](docs/SESSION_NOTES_2026-05-15.md) |
+| **Voice** | Web Speech (desktop) + Whisper transcribe (Expo Go) |
+| **Chat UI (iOS)** | `ChatBubble.tsx`, `RecommendationBlocks.tsx` layout fixes |
+| **Validation** | `validate-order-parser.ts` (19), `validate-ai.ts` (23) |
+| **Session notes** | [18 May](docs/SESSION_NOTES_2026-05-18.md) · [15 May](docs/SESSION_NOTES_2026-05-15.md) · [Inception](docs/SESSION_NOTES.md) |
 
 ---
 
@@ -161,14 +294,17 @@ flowchart TB
     Routes[REST Routes]
     AI[aiService]
     Orch[chatOrchestrator]
+    CartAI[openaiCartActions]
     Parse[orderSegmentParser]
     Meal[mealSuggestions]
     Menu[(menu.ts)]
     Routes --> AI
     AI --> Orch
+    Orch --> CartAI
     Orch --> Parse
     Orch --> Meal
-    AI --> OpenAI[OpenAI optional]
+    CartAI --> OpenAI[OpenAI]
+    AI --> OpenAI
     AI --> Menu
   end
 
@@ -183,7 +319,8 @@ flowchart TB
 | Backend API | Docker **or** `npm run dev` | `3001` |
 | Expo Metro / app UI | Your PC (`npx expo start`) | `8081` (default) |
 | Expo Go (phone) | Your iPhone/Android | Connects to Metro on PC |
-| Web Speech (mic) | Desktop **Edge / Chrome** only | Via `localhost:8081` |
+| Web Speech (mic) | Desktop **Edge / Chrome** | Via `localhost:8081` |
+| Expo Go voice | iPhone / Android | Record → `POST /api/transcribe` |
 
 ### Client-side state
 
@@ -206,15 +343,17 @@ CORS is enabled with `origin: true` so web and LAN devices can call the API duri
 ```
 POST /api/chat
   ├─ Greeting (hello, empty history)? → getGreetingReply()
-  ├─ handleStructuredChat()  ← rules-first (always)
+  ├─ handleStructuredChat()  ← async
   │     ├─ Session yes/no (place_order | bulk_add)
   │     ├─ Cancel / list / detail orders
   │     ├─ Place order → summary + await yes
   │     ├─ Compound: menu question + cart add
-  │     ├─ Cart add (parseAddActionsFromMessage)
-  │     └─ Menu inquiry (category, chef picks, meal gaps)
-  └─ If null && OPENAI_API_KEY → OpenAI JSON mode
-        └─ on failure → handleStructuredChat() again
+  │     ├─ Cart add → resolveCartActions()
+  │     │     ├─ OPENAI_API_KEY? → openaiCartActions + reconcileAiCartActions
+  │     │     └─ else → orderSegmentParser (rules)
+  │     └─ Menu inquiry (category, blocks, meal gaps)
+  └─ If null && OPENAI_API_KEY → OpenAI general JSON chat
+        └─ on failure → rules fallback
 ```
 
 `GET /health` → `"ai": "openai"` or `"ai": "rules"`.  
@@ -248,15 +387,14 @@ Handles messy voice and chat text without OpenAI:
 | Setting | Value |
 |---------|--------|
 | Provider | OpenAI (`openai` npm package) |
-| Default model | `gpt-4o-mini` (`OPENAI_MODEL`) |
-| Temperature | `0.3` |
-| Response format | `{ type: "json_object" }` |
-| History | Last 8 messages |
-| Extra context | Cart categories, missing meal categories, session state |
+| Default model | `gpt-4o` (`OPENAI_MODEL`; override in `.env`) |
+| Cart parse | Dedicated pass — temperature **0**, JSON actions |
+| General chat | Temperature `0.2` when structured path returns null |
+| Reconcile | `reconcileAiCartActions()` after every OpenAI cart response |
 
-OpenAI is used when structured rules return `null` and for richer phrasing; **core ordering logic works offline** via rules.
+OpenAI is the **primary cart parser** when a key is set; rules handle menu browse, place/cancel, confirmations, and offline fallback.
 
-### Example phrases (rules path)
+### Example phrases
 
 | You say | Expected behavior |
 |---------|-------------------|
@@ -265,6 +403,10 @@ OpenAI is used when structured rules return `null` and for richer phrasing; **co
 | `Suggestions for bowls` | Lists all bowl items only |
 | `Add 3 truffle fries and tomato bruschetta of quantity 6` | 3× fries, 6× bruschetta |
 | `seven spicy chicken sandwiches` | 7× sandwich |
+| `add four sandwiches and seven burgers with three lemonades` | 4 + 7 + 3 (separate items) |
+| `Add Craft Lavender Lemonade` (cart non-empty) | **Only** lemonade added |
+| `Add two large sparkling waters` | 2× Large water |
+| `Change my burger to small` | Size updated on burger line |
 | `Add 40 sparkling water` | Confirms bulk qty; other items add immediately |
 | `What are bowls? Also add 2 soup` | Bowl list + 2× soup in cart |
 
@@ -276,9 +418,10 @@ OpenAI is used when structured rules return `null` and for richer phrasing; **co
 
 | Type | Description |
 |------|-------------|
-| `ADD` | Add item with optional `modifiers` |
-| `REMOVE` | Remove by `itemId` |
+| `ADD` | Add item with optional `modifiers` (e.g. `size: small\|medium\|large`) |
+| `REMOVE` | Remove by `itemId` (+ optional size modifier match) |
 | `UPDATE_QUANTITY` | Set quantity for `itemId` |
+| `SET_MODIFIER` | Change size/options on an existing cart line |
 | `CLEAR` | Empty cart |
 
 ### Order actions (API → client)
@@ -313,9 +456,10 @@ Base URL: `http://localhost:3001` (laptop) or `http://<YOUR_LAN_IP>:3001` (phone
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/health` | Status + AI mode (`openai` / `rules`) |
-| GET | `/api/menu` | Full menu |
-| POST | `/api/chat` | Natural language → reply, actions, orders, session |
+| GET | `/health` | Status + AI mode (`openai` / `rules`) + voice (`whisper` if configured) |
+| GET | `/api/menu` | Full menu (includes size modifiers) |
+| POST | `/api/chat` | Natural language → reply, actions, orders, session, `recommendationBlocks` |
+| POST | `/api/transcribe` | Audio upload → text (Whisper; requires OpenAI key) |
 
 #### `POST /api/chat` request body
 
@@ -384,30 +528,37 @@ viridien_project_intelligent_bistro/
 ├── docker-compose.yml
 ├── docs/
 │   ├── SESSION_NOTES.md
-│   └── SESSION_NOTES_2026-05-15.md   # Latest AI + voice + parsing work
+│   ├── SESSION_NOTES_2026-05-18.md   # Sizes, OpenAI cart, iOS UI, reconcile
+│   └── SESSION_NOTES_2026-05-15.md   # Structured chat, web voice, parsing
 ├── backend/
 │   ├── Dockerfile
 │   ├── .env.example
 │   └── src/
-│       ├── data/menu.ts              # 30+ items, aliases, modifiers
+│       ├── data/menu.ts, menuModifiers.ts
 │       ├── services/
-│       │   ├── aiService.ts          # OpenAI + orchestration entry
-│       │   ├── chatOrchestrator.ts   # Place/cancel/confirm/add flows
-│       │   ├── mealSuggestions.ts    # Categories, pairings, meal gaps
+│       │   ├── aiService.ts
+│       │   ├── chatOrchestrator.ts
+│       │   ├── openaiCartActions.ts  # OpenAI-first cart parse
+│       │   ├── openaiMenuIntent.ts
+│       │   ├── menuBrowseResolver.ts
+│       │   ├── sizeParser.ts
+│       │   ├── mealSuggestions.ts
 │       │   ├── menuInquiry.ts
-│       │   ├── messageNormalizer.ts  # Voice/text cleanup
-│       │   ├── orderSegmentParser.ts
-│       │   ├── orderParser.ts        # Orders cancel/detail
-│       │   └── ruleBasedParser.ts    # Legacy path (partial)
-│       ├── routes/menu.ts, chat.ts
+│       │   ├── messageNormalizer.ts
+│       │   ├── orderSegmentParser.ts # reconcileAiCartActions
+│       │   ├── orderParser.ts
+│       │   └── transcribeService.ts
+│       ├── routes/menu.ts, chat.ts, transcribe.ts
+│       └── scripts/validate-ai.ts, validate-order-parser.ts
 │       └── types/index.ts
 └── mobile/
     ├── app.json
     ├── app/(tabs)/                   # Menu, AI, Cart, Orders
     └── src/
         ├── lib/api.ts
-        ├── lib/webSpeechRecognition.ts
-        ├── hooks/useVoiceInput.web.ts
+        ├── lib/webSpeechRecognition.ts, transcribeAudio.ts, menuModifiers.ts
+        ├── hooks/useVoiceInput.web.ts, useVoiceInput.native.ts
+        ├── components/SizeSelector.tsx, RecommendationBlocks.tsx
         └── store/cartStore.ts, ordersStore.ts, menuStore.ts
 ```
 
@@ -573,9 +724,11 @@ Open **http://localhost:8081**. The app uses `apiUrlLocal` (`localhost:3001`) au
 
 ---
 
-## Voice input (web — Edge / Chrome)
+## Voice input (web + Expo Go)
 
-Voice ordering uses the browser **Web Speech API** (not available in Expo Go on phone).
+### Web — Edge / Chrome (live speech)
+
+Voice ordering on desktop uses the browser **Web Speech API**.
 
 ### Requirements
 
@@ -600,7 +753,13 @@ Voice ordering uses the browser **Web Speech API** (not available in Expo Go on 
 - Live transcript appears in the text field while speaking
 - After **stop**, wait ~1 second before tapping **mic** again (session cooldown for Edge)
 - Status: *Listening…*, *Still listening — reconnecting…*, or inline error if mic blocked
-- **Expo Go (phone):** no mic button / type orders instead
+### Expo Go — iPhone / Android (Whisper)
+
+1. Ensure `OPENAI_API_KEY` is set and `GET /health` shows `"voice": "whisper"`.
+2. Set `apiUrlDevice` in `mobile/app.json` to your PC’s **Wi‑Fi IPv4**.
+3. On the **AI** tab, tap **mic** → speak → tap **stop** → transcript appears → send.
+
+Implementation: `useVoiceInput.native.ts` records with `expo-av` → `POST /api/transcribe` (OpenAI Whisper).
 
 ### Troubleshooting voice
 
@@ -729,7 +888,7 @@ The Expo mobile app is **not** in Docker. Run it with `npx expo start` on your h
 |----------|----------|---------|-------------|
 | `PORT` | no | `3001` | HTTP port |
 | `OPENAI_API_KEY` | no | — | Enables OpenAI when set |
-| `OPENAI_MODEL` | no | `gpt-4o-mini` | Model name |
+| `OPENAI_MODEL` | no | `gpt-4o` | Model for cart + chat + Whisper |
 
 ### Mobile (`mobile/app.json` → `expo.extra`)
 
@@ -749,6 +908,8 @@ The Expo mobile app is **not** in Docker. Run it with `npx expo start` on your h
 | `npm run dev` | Dev server with hot reload |
 | `npm run build` | Compile TypeScript |
 | `npm start` | Run `dist/index.js` |
+| `npm run validate:parser` | 19 cart-parser + reconcile tests |
+| `npm run validate:ai` | 23 structured-chat tests |
 
 ### Mobile
 
@@ -790,6 +951,10 @@ The Expo mobile app is **not** in Docker. Run it with `npx expo start` on your h
 | “Connecting to the kitchen” | Rules parse failed; OpenAI down | Rebuild API; try shorter order; rules work offline |
 | Voice works once then fails | Edge session overlap | Wait ~1s between stop/start; use localhost |
 | `backend/.env` disappeared | File is gitignored | Copy from `backend/.env.example` |
+| AI adds whole cart on one item | OpenAI + cart context | Fixed: `reconcileAiCartActions` — rebuild API |
+| Giant chat cards on iPhone | ScrollView flex stretch | Pull latest mobile; reload Expo |
+| Wrong qty on *with 3 X* | Segment attached qty to prior item | `expandWithClauses` + OpenAI cart parser |
+| Expo Go mic silent | No Web Speech on native | Use mic button (Whisper); check `voice` in `/health` |
 
 ### Find your correct Wi‑Fi IP (Windows)
 
@@ -813,10 +978,20 @@ http://<YOUR_WIFI_IPV4>:3001/health
 |-------|----------------|
 | Mobile | Expo **SDK 54**, React Native **0.81**, React **19**, Expo Router **6**, NativeWind **4** |
 | Mobile state | Zustand 5 (`cart`, `orders`, `menu` stores) |
-| Mobile voice | Web Speech API (`webSpeechRecognition.ts`) — Edge/Chrome desktop |
+| Mobile voice | Web Speech (desktop) + **Whisper** transcribe (Expo Go) |
 | Backend | Express 4, TypeScript 5, Zod 3, OpenAI SDK |
-| AI | **Rules-first** (`chatOrchestrator`, `orderSegmentParser`, `mealSuggestions`) + optional `gpt-4o-mini` |
+| AI | **OpenAI-first cart** (`openaiCartActions`) + **reconcile** + rules fallback; `gpt-4o` default when key set |
 | DevOps | Docker multi-stage build, Docker Compose, health checks |
+
+---
+
+## Session notes and documentation
+
+| Document | Contents |
+|----------|----------|
+| [`docs/SESSION_NOTES_2026-05-18.md`](docs/SESSION_NOTES_2026-05-18.md) | **Today** — sizes, OpenAI cart, iOS UI, hallucination fix, deployment & scale |
+| [`docs/SESSION_NOTES_2026-05-15.md`](docs/SESSION_NOTES_2026-05-15.md) | Structured chat, cancel/place order, web voice, quantity parsing |
+| [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md) | Project inception, Expo/Docker setup, early troubleshooting |
 
 ---
 

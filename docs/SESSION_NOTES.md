@@ -10,6 +10,7 @@ This document captures decisions, setup steps, issues, and fixes from our workin
 
 | Date | File | Topics |
 |------|------|--------|
+| **18 May 2026** | [SESSION_NOTES_2026-05-18.md](./SESSION_NOTES_2026-05-18.md) | Sizes (all dishes), OpenAI cart parser, reconcile anti-hallucination, iOS chat UI, Expo Go Whisper, deployment & scale |
 | **15 May 2026** | [SESSION_NOTES_2026-05-15.md](./SESSION_NOTES_2026-05-15.md) | Smart AI (cancel/place confirm), meal suggestions, quantity parsing, Edge voice, compound orders |
 
 ---
