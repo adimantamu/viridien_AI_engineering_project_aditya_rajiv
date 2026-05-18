@@ -374,35 +374,13 @@ export default function AssistantScreen() {
 
 
 
-  const { listening, preparing, reconnecting, available, speechSupport, voiceError, toggle } =
-    useVoiceInput({
-
+  const { listening, preparing, available, toggle } = useVoiceInput({
     onTranscriptChange: setInput,
-
     onFinalTranscript: setInput,
-
-    onError: (msg) => {
-
-      if (Platform.OS === "web" && typeof window !== "undefined") {
-
-        return;
-
-      }
-
-      Alert.alert("Voice input", msg);
-
-    },
-
+    onError: (msg) => Alert.alert("Voice input", msg),
   });
 
-
-
   const voiceActive = listening || preparing;
-  const voiceStatusLabel = reconnecting
-    ? "Still listening — reconnecting…"
-    : preparing && !listening
-      ? "Starting microphone…"
-      : "Listening… speak now";
 
 
 
@@ -414,13 +392,7 @@ export default function AssistantScreen() {
 
         title="AI Maître d'"
 
-        subtitle={
-          available
-            ? speechSupport?.browser === "edge"
-              ? "Type or speak your order (Microsoft Edge)"
-              : "Type or speak your order"
-            : speechSupport?.hint ?? "Type your order below"
-        }
+        subtitle={available ? "Type or speak your order" : "Type your order below"}
 
       />
 
@@ -463,35 +435,20 @@ export default function AssistantScreen() {
           ))}
 
           {voiceActive ? (
-
             <View style={{ flexDirection: "row", alignItems: "center", marginBottom: 12 }}>
-
               <View
-
                 style={{
-
                   width: 8,
-
                   height: 8,
-
                   borderRadius: 4,
-
-                  backgroundColor: preparing || reconnecting ? "#c9a962" : "#e85d4c",
-
+                  backgroundColor: preparing ? "#c9a962" : "#e85d4c",
                   marginRight: 8,
-
                 }}
-
               />
-
               <Text style={{ color: "#c9a962", fontSize: 13 }}>
-
-                {voiceStatusLabel}
-
+                {preparing ? "Starting microphone…" : "Listening… speak now"}
               </Text>
-
             </View>
-
           ) : null}
 
           {sending ? (
@@ -534,85 +491,31 @@ export default function AssistantScreen() {
 
 
 
-          {voiceError && !voiceActive ? (
-
-            <Text
-
-              style={{
-
-                marginBottom: 8,
-
-                fontSize: 12,
-
-                lineHeight: 17,
-
-                color: "#e85d4c",
-
-              }}
-
-            >
-
-              {voiceError}
-
-            </Text>
-
-          ) : null}
-
-
-
           <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
-
-            {available ? (
-
-              <Pressable
-
-                onPress={() => {
-
-                  hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
-
-                  toggle();
-
-                }}
-
-                disabled={sending}
-
-                style={({ pressed }) => ({
-
-                  width: 48,
-
-                  height: 48,
-
-                  borderRadius: 24,
-
-                  alignItems: "center",
-
-                  justifyContent: "center",
-
-                  backgroundColor: voiceActive ? "#e85d4c" : pressed ? "#2a2520" : "#242019",
-
-                  borderWidth: 1,
-
-                  borderColor: voiceActive ? "#e85d4c" : "#3d3528",
-
-                  opacity: sending ? 0.45 : 1,
-
-                })}
-
-              >
-
-                <Ionicons
-
-                  name={voiceActive ? "stop" : "mic"}
-
-                  size={22}
-
-                  color={voiceActive ? "#fff" : "#c9a962"}
-
-                />
-
-              </Pressable>
-
-            ) : null}
+            <Pressable
+              onPress={() => {
+                hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
+                toggle();
+              }}
+              disabled={!available || sending}
+              style={({ pressed }) => ({
+                width: 48,
+                height: 48,
+                borderRadius: 24,
+                alignItems: "center",
+                justifyContent: "center",
+                backgroundColor: voiceActive ? "#e85d4c" : pressed ? "#2a2520" : "#242019",
+                borderWidth: 1,
+                borderColor: voiceActive ? "#e85d4c" : "#3d3528",
+                opacity: !available || sending ? 0.45 : 1,
+              })}
+            >
+              <Ionicons
+                name={voiceActive ? "stop" : "mic"}
+                size={22}
+                color={voiceActive ? "#fff" : "#c9a962"}
+              />
+            </Pressable>
 
 
 

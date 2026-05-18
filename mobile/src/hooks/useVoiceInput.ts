@@ -1,6 +1,15 @@
-/**
- * TypeScript entry point. Metro loads `useVoiceInput.native.ts` on iOS/Android
- * and `useVoiceInput.web.ts` on web — neither imports expo-speech-recognition in Expo Go.
- */
+import { Platform } from "react-native";
+import type { UseVoiceInputOptions, UseVoiceInputResult } from "./useVoiceInput.types";
+
 export type { UseVoiceInputOptions, UseVoiceInputResult } from "./useVoiceInput.types";
-export { useVoiceInput } from "./useVoiceInput.web";
+
+const impl =
+  Platform.OS === "web"
+    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("./useVoiceInput.web")
+    : // eslint-disable-next-line @typescript-eslint/no-require-imports
+      require("./useVoiceInput.native");
+
+export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResult {
+  return impl.useVoiceInput(options);
+}
