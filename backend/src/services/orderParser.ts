@@ -45,7 +45,13 @@ function resolveTargetOrder(request: ChatRequest): ClientOrderSnapshot | null {
 
 export function wantsOrderDetail(message: string): boolean {
   const lower = normalize(message);
+  if (/\b(cancel|delete|remove)\b/i.test(lower)) {
+    return false;
+  }
   if (/(show|view|list)\s+(my\s+)?orders?\s*$/i.test(message.trim())) {
+    return false;
+  }
+  if (/\b(place|submit|checkout)\b.*\b(order|cart)\b/i.test(lower)) {
     return false;
   }
   return (
@@ -54,7 +60,10 @@ export function wantsOrderDetail(message: string): boolean {
     ) &&
       /(order|ordered)/i.test(message)) ||
     /(what|which).*(did i|have i).*(order|ordered|placed)/i.test(message) ||
-    /(current|latest|last|my)\s+order/i.test(message) ||
+    /(what|which).*(in|inside)\s+(my\s+)?(current|latest|last)\s+order/i.test(message) ||
+    /(show|list|tell).*(items?|details?).*(in|inside|of)\s+(my\s+)?(current|latest|last)\s+order/i.test(
+      message,
+    ) ||
     /order\s*#?\s*\d+.*(items?|detail|contain)/i.test(message) ||
     /what\s+(is|'s)\s+in\s+(my\s+)?(current\s+)?order/i.test(lower) ||
     /items?\s+in\s+(my\s+)?(current\s+)?order/i.test(lower)

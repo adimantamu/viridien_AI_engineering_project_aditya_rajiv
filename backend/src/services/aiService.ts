@@ -2,8 +2,15 @@ import OpenAI from "openai";
 import { z } from "zod";
 import { getMenuCatalogForPrompt, MENU_ITEMS } from "../data/menu.js";
 import type { CartAction, ChatRequest, ChatResponse, OrderAction } from "../types/index.js";
-import { orderDetailReply } from "./orderParser.js";
-import { parseWithRules } from "./ruleBasedParser.js";
+import {
+  getGreetingReply,
+  handleStructuredChat,
+  HIGH_QUANTITY_THRESHOLD,
+  isGreetingMessage,
+  splitByQuantityThreshold,
+} from "./chatOrchestrator.js";
+import { analyzeMealGaps, getCartCategories } from "./mealSuggestions.js";
+import { dedupeCartActions } from "./orderSegmentParser.js";
 
 const CartActionSchema = z.object({
   type: z.enum(["ADD", "REMOVE", "UPDATE_QUANTITY", "CLEAR", "SET_MODIFIER"]),
@@ -29,81 +36,122 @@ const AiResponseSchema = z.object({
 const SYSTEM_PROMPT = `You are the AI maître d' for "The Intelligent Bistro", a premium restaurant ordering assistant.
 Return valid JSON: reply, actions (cart), orderActions (optional), suggestions (optional).
 
-Cart action types:
-- ADD: itemId, quantity (default 1), modifiers (optional)
-- REMOVE: itemId, quantity (default 1)
-- UPDATE_QUANTITY: itemId, quantity
-- CLEAR: no other fields
-
-Order action types:
-- CANCEL_ORDER: orderId and/or orderNumber from the orders list in context
-- CANCEL_ALL_ORDERS: cancel every active (placed) order
+Cart action types: ADD, REMOVE, UPDATE_QUANTITY, CLEAR
+Order action types: CANCEL_ORDER, CANCEL_ALL_ORDERS
 
 Rules:
-- Answer menu questions conversationally (starters, mains, prices, recommendations) using the MENU CATALOG — actions may be empty for pure Q&A
-- Parse messy natural language: "Add 2 sandwiches. And some sparkling water. About two waters" → multiple ADD actions; prefer the final quantity when the user corrects themselves
-- Match informal language; infer modifiers (size, spice, doneness) from context
-- Never invent menu item ids — only use ids from the catalog
-- When listing order or cart items, include EVERY line with quantity, name, and price
-- If user asks to place order, tell them to use Place order on the Cart tab
+- Answer menu questions warmly using the MENU CATALOG
+- When user says cancel order / cancel my last order → return CANCEL_ORDER orderActions (do NOT list order items as the only response)
+- When user wants to place/checkout order → summarize cart and ask them to reply "yes" to confirm (do not place in actions)
+- Parse messy multi-item orders into multiple ADD actions
+- For quantities over ${HIGH_QUANTITY_THRESHOLD} of one item, mention you need confirmation in your reply
+- When user asks for suggestions/recommendations for a category (bowls, starters, drinks, etc.), list ONLY items from that category — never unrelated chef picks
+- Suggest real combos (e.g. burger + fries + drink; soup + bread; dessert + espresso)
+- If the cart context lists missing meal categories, proactively suggest 2–3 items from those missing categories
+- Never invent menu item ids
 
 MENU CATALOG:
 `;
+
+function guardHighQuantityActions(
+  response: ChatResponse,
+  session: ChatRequest["session"],
+): ChatResponse {
+  if (!response.actions.length) {
+    return { ...response, sessionContext: session ?? { awaitingConfirmation: null } };
+  }
+
+  const deduped = dedupeCartActions(response.actions);
+  const { immediate, pending } = splitByQuantityThreshold(deduped);
+
+  if (!pending.length) {
+    return {
+      ...response,
+      actions: immediate,
+      sessionContext: session?.awaitingConfirmation ? session : { awaitingConfirmation: null },
+    };
+  }
+
+  const pendingDesc = pending
+    .map((a) => {
+      const item = MENU_ITEMS.find((i) => i.id === a.itemId);
+      return `${a.quantity}× ${item?.name ?? a.itemId}`;
+    })
+    .join(", ");
+
+  let reply = response.reply;
+  if (!reply.toLowerCase().includes("confirm")) {
+    reply += `\n\nPlease confirm the large quantity: ${pendingDesc}. Reply yes or no.`;
+  }
+
+  return {
+    ...response,
+    reply,
+    actions: immediate,
+    sessionContext: {
+      awaitingConfirmation: "bulk_add",
+      pendingActions: pending,
+    },
+    suggestions: ["Yes", "No", "View cart"],
+  };
+}
 
 export function isOpenAiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
 
 export async function processChatMessage(request: ChatRequest): Promise<ChatResponse> {
-  const orderDetail = orderDetailReply(request);
-  if (orderDetail) {
+  const session = request.session;
+
+  if (isGreetingMessage(request.message) && (!request.history?.length || request.history.length <= 1)) {
+    return getGreetingReply();
+  }
+
+  const structured = handleStructuredChat(request, session);
+  if (structured) return structured;
+
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) {
     return {
-      reply: orderDetail,
+      reply: 'Tell me what you\'d like — e.g. "Add two burgers" or "What are your starters?"',
       actions: [],
-      orderActions: [],
-      suggestions: ["Cancel my last order", "Show my orders", "View cart"],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["What are your starters?", "Add spicy chicken sandwich", "Place order"],
       parsedBy: "rules",
     };
   }
 
-  const apiKey = process.env.OPENAI_API_KEY?.trim();
-
-  if (!apiKey) {
-    return parseWithRules(request);
-  }
-
   try {
     const openai = new OpenAI({ apiKey });
+    const cartCats = getCartCategories(request);
+    const missingCats = analyzeMealGaps(cartCats);
     const cartContext = request.cart?.lines.length
-      ? `\nCurrent cart: ${JSON.stringify(request.cart.lines.map((l) => ({ name: l.name, qty: l.quantity })))}`
+      ? `\nCurrent cart: ${JSON.stringify(request.cart.lines.map((l) => ({ name: l.name, qty: l.quantity })))}\nCart categories present: ${[...cartCats].join(", ") || "none"}${missingCats.length ? `\nMissing for a balanced meal: ${missingCats.join(", ")}` : ""}`
       : "";
 
     const ordersContext = request.orders?.length
-      ? `\nPlaced orders (include every line when listing):\n${JSON.stringify(
-          request.orders.filter((o) => o.status === "placed"),
-          null,
-          2,
-        )}`
+      ? `\nPlaced orders:\n${JSON.stringify(request.orders.filter((o) => o.status === "placed"), null, 2)}`
+      : "";
+
+    const sessionContext = session?.awaitingConfirmation
+      ? `\nSession: awaiting confirmation "${session.awaitingConfirmation}"${session.pendingActions?.length ? ` pending actions: ${JSON.stringify(session.pendingActions)}` : ""}`
       : "";
 
     const historyText =
       request.history
-        ?.slice(-6)
+        ?.slice(-8)
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n") ?? "";
 
     const completion = await openai.chat.completions.create({
       model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      temperature: 0.2,
+      temperature: 0.3,
       response_format: { type: "json_object" },
       messages: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT + getMenuCatalogForPrompt(),
-        },
+        { role: "system", content: SYSTEM_PROMPT + getMenuCatalogForPrompt() },
         {
           role: "user",
-          content: `${historyText ? `Conversation:\n${historyText}\n\n` : ""}User message: ${request.message}${cartContext}${ordersContext}\n\nRespond with JSON: {"reply":"...","actions":[...],"orderActions":[...],"suggestions":[...]}`,
+          content: `${historyText ? `Conversation:\n${historyText}\n\n` : ""}User: ${request.message}${cartContext}${ordersContext}${sessionContext}\n\nJSON: {"reply","actions","orderActions","suggestions"}`,
         },
       ],
     });
@@ -113,18 +161,59 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
 
     const parsed = AiResponseSchema.parse(JSON.parse(raw));
     const actions = validateActions(parsed.actions as CartAction[]);
+    const orderActions = validateOrderActions(
+      parsed.orderActions as OrderAction[] | undefined,
+      request,
+    );
 
-    return {
+    const base: ChatResponse = {
       reply: parsed.reply,
       actions,
-      orderActions: validateOrderActions(parsed.orderActions as OrderAction[] | undefined, request),
+      orderActions,
       suggestions: parsed.suggestions,
       parsedBy: "openai",
     };
+
+    if (orderActions.length) {
+      return {
+        ...base,
+        actions: [],
+        sessionContext: { awaitingConfirmation: null, pendingActions: [] },
+      };
+    }
+
+    if (wantsPlaceOrderFromAi(request.message) && request.cart?.lines.length) {
+      return (
+        handleStructuredChat(request, session) ?? {
+          reply: parsed.reply,
+          actions: [],
+          sessionContext: { awaitingConfirmation: "place_order" },
+          suggestions: ["Yes", "No", "View cart"],
+          parsedBy: "openai",
+        }
+      );
+    }
+
+    return guardHighQuantityActions(base, session);
   } catch (error) {
-    console.error("[chat] OpenAI failed, using rule-based parser:", error);
-    return parseWithRules(request);
+    console.error("[chat] OpenAI failed:", error);
+    const fallback = handleStructuredChat(request, session);
+    if (fallback) return fallback;
+    return {
+      reply: "I'm having trouble connecting to the kitchen. Please try again in a moment.",
+      actions: [],
+      sessionContext: session ?? { awaitingConfirmation: null },
+      parsedBy: "rules",
+    };
   }
+}
+
+function wantsPlaceOrderFromAi(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    /\b(place|submit|checkout)\b.*\b(order|cart)\b/i.test(lower) ||
+    /^(place order|checkout)$/i.test(message.trim())
+  );
 }
 
 function validateOrderActions(
@@ -139,11 +228,13 @@ function validateOrderActions(
     if (action.type === "CANCEL_ORDER") {
       if (action.orderId && placedIds.has(action.orderId)) return true;
       if (action.orderNumber) {
-        const match = request.orders?.find(
-          (o) => o.orderNumber === action.orderNumber && o.status === "placed",
+        return Boolean(
+          request.orders?.find(
+            (o) => o.orderNumber === action.orderNumber && o.status === "placed",
+          ),
         );
-        return Boolean(match);
       }
+      return placedIds.size > 0;
     }
     return false;
   });
@@ -151,7 +242,6 @@ function validateOrderActions(
 
 function validateActions(actions: CartAction[]): CartAction[] {
   const validIds = new Set(MENU_ITEMS.map((item) => item.id));
-
   return actions.filter((action) => {
     if (action.type === "CLEAR") return true;
     if (!action.itemId || !validIds.has(action.itemId)) return false;

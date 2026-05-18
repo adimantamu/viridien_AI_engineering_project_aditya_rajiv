@@ -1,73 +1,35 @@
 import { MENU_ITEMS } from "../data/menu.js";
 import type { ChatRequest } from "../types/index.js";
-
-function normalize(text: string): string {
-  return text.toLowerCase().replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
-}
-
-const CATEGORY_ALIASES: Record<string, string> = {
-  starter: "Starters",
-  starters: "Starters",
-  appetizer: "Starters",
-  appetizers: "Starters",
-  main: "Mains",
-  mains: "Mains",
-  entree: "Mains",
-  entrees: "Mains",
-  bowl: "Bowls",
-  bowls: "Bowls",
-  salad: "Salads",
-  salads: "Salads",
-  side: "Sides",
-  "side dish": "Sides",
-  sides: "Sides",
-  drink: "Drinks",
-  drinks: "Drinks",
-  beverage: "Drinks",
-  beverages: "Drinks",
-  dessert: "Desserts",
-  desserts: "Desserts",
-  sweet: "Desserts",
-};
+import {
+  detectMenuCategory,
+  formatSmartRecommendations,
+  listCategoryItems,
+  mealCompletionReply,
+  pairingAdviceReply,
+} from "./mealSuggestions.js";
+import { normalizeText } from "./orderSegmentParser.js";
 
 function formatItemLine(item: (typeof MENU_ITEMS)[0]): string {
   return `• ${item.name} — $${item.price.toFixed(2)} — ${item.description}`;
 }
 
-function listByCategory(category: string): string {
-  const items = MENU_ITEMS.filter((i) => i.category === category);
-  if (!items.length) {
-    return `We don't have items listed under ${category} right now.`;
-  }
-  return `Here are our ${category}:\n\n${items.map(formatItemLine).join("\n")}\n\nSay "Add …" to put something in your cart.`;
-}
-
-function detectCategory(lower: string): string | null {
-  for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
-    const aliasPattern = alias.replace(/\s+/g, "\\s+");
-    if (
-      new RegExp(`(options?|items?|dishes?|choices|menu).*(for\\s+)?${aliasPattern}\\b`, "i").test(
-        lower,
-      ) ||
-      new RegExp(`\\b${aliasPattern}\\s+(options?|items?|dishes?|menu)`, "i").test(lower) ||
-      new RegExp(`what (do you have|('s| is) on).*(the\\s+)?${aliasPattern}\\b`, "i").test(
-        lower,
-      ) ||
-      new RegExp(`^(show|list)\\s+(me\\s+)?(the\\s+)?${aliasPattern}\\b`, "i").test(lower)
-    ) {
-      return category;
-    }
-  }
-  return null;
-}
-
 export function menuInquiryReply(request: ChatRequest): string | null {
   const message = request.message.trim();
-  const lower = normalize(message);
+  const lower = normalizeText(message);
 
-  const category = detectCategory(lower);
+  const completion = mealCompletionReply(request);
+  if (completion) return completion;
+
+  const pairing = pairingAdviceReply(request);
+  if (pairing) return pairing;
+
+  const category = detectMenuCategory(message);
   if (category) {
-    return listByCategory(category);
+    const isSuggestion = /\b(suggestions?|recommend(?:ations?)?|ideas?|picks?)\b/i.test(lower);
+    const intro = isSuggestion
+      ? `Great choice — here are some ${category} I'd suggest:`
+      : undefined;
+    return listCategoryItems(category, intro);
   }
 
   if (
@@ -93,27 +55,18 @@ export function menuInquiryReply(request: ChatRequest): string | null {
   }
 
   if (/recommend|suggestion|what should i (get|order)|what('s| is) good/i.test(lower)) {
-    const picks = [
-      MENU_ITEMS.find((i) => i.id === "spicy-chicken-sandwich"),
-      MENU_ITEMS.find((i) => i.id === "truffle-mushroom-burger"),
-      MENU_ITEMS.find((i) => i.id === "soup-du-jour"),
-      MENU_ITEMS.find((i) => i.id === "craft-lemonade"),
-    ].filter(Boolean) as typeof MENU_ITEMS;
-
-    return `Chef's picks:\n\n${picks.map(formatItemLine).join("\n")}\n\nWant one? Just say "Add …" with the item name.`;
+    return formatSmartRecommendations(request);
   }
 
-  const priceMatch = lower.match(
-    /how much (is|are|for)\s+(?:the\s+)?(.+?)(?:\?|$)/,
-  );
+  const priceMatch = lower.match(/how much (is|are|for)\s+(?:the\s+)?(.+?)(?:\?|$)/);
   if (priceMatch) {
     const phrase = priceMatch[2];
     const item = MENU_ITEMS.find((i) => {
-      const n = normalize(phrase);
+      const n = normalizeText(phrase);
       return (
-        normalize(i.name).includes(n) ||
-        n.includes(normalize(i.name)) ||
-        i.aliases?.some((a) => normalize(a).includes(n) || n.includes(normalize(a)))
+        normalizeText(i.name).includes(n) ||
+        n.includes(normalizeText(i.name)) ||
+        i.aliases?.some((a) => normalizeText(a).includes(n) || n.includes(normalizeText(a)))
       );
     });
     if (item) {

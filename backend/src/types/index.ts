@@ -69,11 +69,19 @@ export interface ClientOrderSnapshot {
   lines: ClientOrderLineSnapshot[];
 }
 
+export type ConfirmationType = "place_order" | "bulk_add";
+
+export interface ChatSessionContext {
+  awaitingConfirmation?: ConfirmationType | null;
+  pendingActions?: CartAction[];
+}
+
 export interface ChatRequest {
   message: string;
   history?: ChatMessage[];
   cart?: ClientCartSnapshot;
   orders?: ClientOrderSnapshot[];
+  session?: ChatSessionContext;
 }
 
 export interface ClientCartLine {
@@ -96,4 +104,7 @@ export interface ChatResponse {
   orderActions?: OrderAction[];
   suggestions?: string[];
   parsedBy: "openai" | "rules";
+  /** Client should call placeOrderFromCart() when true */
+  placeOrderFromCart?: boolean;
+  sessionContext?: ChatSessionContext;
 }

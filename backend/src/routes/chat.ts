@@ -48,6 +48,22 @@ const ChatBodySchema = z.object({
       }),
     )
     .optional(),
+  session: z
+    .object({
+      awaitingConfirmation: z.enum(["place_order", "bulk_add"]).nullable().optional(),
+      pendingActions: z
+        .array(
+          z.object({
+            type: z.enum(["ADD", "REMOVE", "UPDATE_QUANTITY", "CLEAR", "SET_MODIFIER"]),
+            itemId: z.string().optional(),
+            quantity: z.number().optional(),
+            lineId: z.string().optional(),
+            modifiers: z.record(z.string()).optional(),
+          }),
+        )
+        .optional(),
+    })
+    .optional(),
 });
 
 export const chatRouter = Router();
