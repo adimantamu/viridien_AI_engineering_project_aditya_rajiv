@@ -16,23 +16,25 @@ The repository is a **monorepo** with two parts:
 ## Table of contents
 
 1. [What this project does](#what-this-project-does)
-2. [Recent changes and implementation notes](#recent-changes-and-implementation-notes)
-3. [System architecture](#system-architecture)
-4. [AI design and specifications](#ai-design-and-specifications)
-5. [Data models and cart logic](#data-models-and-cart-logic)
-6. [API reference](#api-reference)
-7. [Repository structure](#repository-structure)
-8. [Quick start](#quick-start)
-9. [Running on Expo Go (physical phone)](#running-on-expo-go-physical-phone)
-10. [Running on laptop (web browser)](#running-on-laptop-web-browser)
-11. [API URL configuration (laptop + phone)](#api-url-configuration-laptop--phone)
-12. [OpenAI API key setup and verification](#openai-api-key-setup-and-verification)
-13. [Docker](#docker)
-14. [Environment variables](#environment-variables)
-15. [Development commands](#development-commands)
-16. [Troubleshooting](#troubleshooting)
-17. [Tech stack summary](#tech-stack-summary)
-18. [License](#license)
+2. [Latest developments (May 2026)](#latest-developments-may-2026)
+3. [Recent changes and implementation notes](#recent-changes-and-implementation-notes)
+4. [System architecture](#system-architecture)
+5. [AI design and specifications](#ai-design-and-specifications)
+6. [Data models and cart logic](#data-models-and-cart-logic)
+7. [API reference](#api-reference)
+8. [Repository structure](#repository-structure)
+9. [Quick start](#quick-start)
+10. [Running on Expo Go (physical phone)](#running-on-expo-go-physical-phone)
+11. [Running on laptop (web browser)](#running-on-laptop-web-browser)
+12. [Voice input (web — Edge / Chrome)](#voice-input-web--edge--chrome)
+13. [API URL configuration (laptop + phone)](#api-url-configuration-laptop--phone)
+14. [OpenAI API key setup and verification](#openai-api-key-setup-and-verification)
+15. [Docker](#docker)
+16. [Environment variables](#environment-variables)
+17. [Development commands](#development-commands)
+18. [Troubleshooting](#troubleshooting)
+19. [Tech stack summary](#tech-stack-summary)
+20. [License](#license)
 
 ---
 
@@ -40,18 +42,86 @@ The repository is a **monorepo** with two parts:
 
 ### User-facing capabilities
 
-- **Menu browsing** — Items grouped by category (Mains, Bowls, Drinks, etc.) with descriptions, tags, and prices.
+- **Menu browsing** — **30+ items** across seven categories (Starters, Mains, Bowls, Salads, Sides, Drinks, Desserts), each with **at least four dishes**, descriptions, tags, and prices.
 - **Manual cart management** — Add from menu cards; increment, decrement, or remove lines on the Cart tab.
-- **AI ordering** — Type or tap suggestions like *"Add two spicy chicken sandwiches and a large water"*; the assistant replies in natural language and returns machine-readable **cart actions** that the app applies automatically.
+- **Orders tab** — View placed orders, line items, and totals; cancel from the UI or via chat.
+- **AI maître d'** — Natural-language ordering with structured cart and order actions:
+  - **Add / remove / update** items with smart quantity parsing (digits and words: *seven*, *dozen*, *3 in quantity*, *of quantity 6*).
+  - **Cancel orders** — *"Cancel my last order"* actually cancels (does not only list items).
+  - **Place order with confirmation** — *"Place order"* shows a full summary → reply **yes** to checkout or **no** to keep editing.
+  - **Large quantity guard** — Quantities over **10** of one item are held for confirmation (e.g. add burgers now, confirm 40× water separately).
+  - **Category suggestions** — *"What are your bowls?"* / *"Suggestions for desserts"* lists only that category.
+  - **Meal coaching** — After adds, suggests pairings; flags missing drinks/sides/desserts in the cart.
+  - **Warm greeting** — First visit to the AI tab shows featured dishes and prompts.
+- **Voice input (web)** — Speak orders in **Microsoft Edge** or **Chrome** on desktop (`localhost:8081`); live transcript in the input field.
 - **Modifiers** — Size (water), spice level (sandwich), protein add-ons (salad), etc., inferred from text or defaulted sensibly.
-- **Premium UI** — Dark bistro palette (gold/cream on charcoal), haptic feedback on native devices, tab navigation, gradient checkout CTA.
+- **Premium UI** — Dark bistro palette (gold/cream on charcoal), haptic feedback on native devices, tab navigation (Menu, AI, Cart, Orders).
 
 ### Engineering goals demonstrated
 
 - Separation of **presentation** (mobile) from **intent parsing** (backend).
 - **Structured AI output** (JSON actions) rather than free-text-only responses.
-- **Graceful degradation** when no cloud LLM key is configured (rule-based parser).
+- **Rules-first AI** with optional OpenAI polish; full ordering works without an API key.
 - Production-minded touches: Zod validation, TypeScript throughout, Dockerized API, health checks.
+
+---
+
+## Latest developments (May 2026)
+
+Major upgrade to the **AI ordering engine**, **menu catalog**, **order lifecycle**, and **web voice input**. Detailed dev log: [`docs/SESSION_NOTES_2026-05-15.md`](docs/SESSION_NOTES_2026-05-15.md).
+
+### Intelligent AI ordering (rules-first)
+
+The backend now runs a **structured chat pipeline** before (and as fallback to) OpenAI:
+
+| Capability | Example | Behavior |
+|------------|---------|----------|
+| **Cancel order** | *"Cancel my last order"* | Returns `CANCEL_ORDER`; Orders tab updates — not a line-item dump |
+| **Place order** | *"Place order"* → *"yes"* | Full cart summary with tax; client calls `placeOrderFromCart` on confirm |
+| **Bulk quantity confirm** | *"Add 40 sparkling waters"* | Items ≤10 add immediately; larger qty needs **yes** / **no** |
+| **Category menu Q&A** | *"Suggestions for bowls"* | Lists **only Bowls** (scored detection on inquiry clause) |
+| **Compound messages** | *"What are your bowls? Also add 3 sandwiches"* | Menu answer **and** cart adds in one reply |
+| **Meal suggestions** | After adding items | Pairing ideas + missing category hints (drink, side, dessert) |
+| **Greeting** | Open AI tab / say *"hello"* | Featured dishes from the menu |
+
+**Processing order (rules path):** confirmations → cancel/order list → place-order flow → compound menu+add → cart add → menu inquiry → OpenAI (if key set).
+
+### Expanded menu
+
+- **7 categories**, **4+ items each** (was ~11 items total).
+- Rich **aliases** for voice/text (*burger*, *choco lava cake*, *grilled atlantic salmon*, *caesar*, etc.).
+
+### Robust quantity & voice parsing
+
+The rule parser (`orderSegmentParser.ts` + `messageNormalizer.ts`) handles:
+
+- Word numbers: *seven*, *four*, *dozen*, *half dozen*
+- Trailing qty: *bruschetta 3 in quantity*, *of quantity 6*
+- Voice glitches: `add.4` → `add 4`, `fries.and also` → split correctly
+- Phrases: *to be added to the cart*, *along with that also add*
+- **No phantom items** — stopwords and word-boundary matching (e.g. `"and"` no longer matches *sandwich*)
+
+### Session-aware chat API
+
+Multi-turn confirmations persist via `sessionContext`:
+
+```json
+{
+  "session": {
+    "awaitingConfirmation": "place_order",
+    "pendingActions": []
+  }
+}
+```
+
+Response may include `placeOrderFromCart: true` and updated `sessionContext`.
+
+### Voice on web (Edge / Chrome)
+
+- Web Speech API in `mobile/src/lib/webSpeechRecognition.ts`
+- **Microsoft Edge** and **Chrome** on desktop; use **`http://localhost:8081`** (mic blocked on raw LAN IP URLs)
+- Serialized stop/start, auto-reconnect on transient errors
+- **Expo Go on phone:** type orders in AI tab (no native speech module in Expo Go)
 
 ---
 
@@ -59,14 +129,15 @@ The repository is a **monorepo** with two parts:
 
 | Area | Detail |
 |------|--------|
-| **Expo SDK 54** | Upgraded from SDK 52 to match current **Expo Go** on the App Store (SDK 54). |
-| **Dual API URLs** | `app.json` uses `apiUrlLocal` (laptop) and `apiUrlDevice` (phone on Wi‑Fi). `src/lib/api.ts` picks the correct URL automatically. |
-| **iOS local HTTP** | `NSAllowsLocalNetworking` enabled so Expo Go can call `http://<LAN-IP>:3001`. |
-| **Docker + OpenAI** | `docker-compose.yml` loads `backend/.env` only — removed host `OPENAI_API_KEY` override that was wiping the key with an empty value. |
-| **Web haptics** | `src/lib/haptics.ts` no-ops on web; native haptics on iOS/Android. |
-| **Babel / NativeWind** | SDK 54 uses `nativewind/babel` + Reanimated 4 + `react-native-worklets@0.5.1`. |
-| **Menu errors** | Failed API calls show the URL the app tried (helps debug wrong LAN IP). |
-| **Session notes** | Extended dev log in [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md). |
+| **Structured chat** | `chatOrchestrator.ts`, `mealSuggestions.ts`, `messageNormalizer.ts`, `orderParser.ts` |
+| **Orders on client** | Zustand `ordersStore`; AI cancel + place-order flows |
+| **Menu ~30 items** | `backend/src/data/menu.ts` — 4+ per category |
+| **Expo SDK 54** | Matches current **Expo Go** on the App Store |
+| **Dual API URLs** | `apiUrlLocal` + `apiUrlDevice` in `app.json`; auto-selected in `api.ts` |
+| **Docker + OpenAI** | `env_file: backend/.env` — no empty host override for `OPENAI_API_KEY` |
+| **Web voice** | `useVoiceInput.web.ts` + `webSpeechRecognition.ts` (Edge/Chrome) |
+| **Web haptics** | `src/lib/haptics.ts` no-ops on web |
+| **Session notes** | [`docs/SESSION_NOTES.md`](docs/SESSION_NOTES.md) · [May 2026](docs/SESSION_NOTES_2026-05-15.md) |
 
 ---
 
@@ -77,26 +148,31 @@ The repository is a **monorepo** with two parts:
 ```mermaid
 flowchart TB
   subgraph Client["Mobile App (Expo)"]
-    UI[Menu / Cart UI]
-    Chat[AI Chat Screen]
-    Store[(Zustand Cart Store)]
-    UI --> Store
-    Chat --> Store
+    UI[Menu / Cart / Orders]
+    Chat[AI Chat + Voice web]
+    CartStore[(cartStore)]
+    OrderStore[(ordersStore)]
+    UI --> CartStore
+    Chat --> CartStore
+    Chat --> OrderStore
   end
 
   subgraph API["Backend (Express)"]
     Routes[REST Routes]
     AI[aiService]
-    Rules[ruleBasedParser]
-    Menu[(menu.ts catalog)]
+    Orch[chatOrchestrator]
+    Parse[orderSegmentParser]
+    Meal[mealSuggestions]
+    Menu[(menu.ts)]
     Routes --> AI
-    AI --> Rules
-    AI --> OpenAI[OpenAI API]
+    AI --> Orch
+    Orch --> Parse
+    Orch --> Meal
+    AI --> OpenAI[OpenAI optional]
     AI --> Menu
-    Rules --> Menu
   end
 
-  Chat -->|POST /api/chat| Routes
+  Chat -->|POST /api/chat + session| Routes
   UI -->|GET /api/menu| Routes
 ```
 
@@ -107,10 +183,17 @@ flowchart TB
 | Backend API | Docker **or** `npm run dev` | `3001` |
 | Expo Metro / app UI | Your PC (`npx expo start`) | `8081` (default) |
 | Expo Go (phone) | Your iPhone/Android | Connects to Metro on PC |
+| Web Speech (mic) | Desktop **Edge / Chrome** only | Via `localhost:8081` |
 
-### Why the cart lives on the client
+### Client-side state
 
-Cart state is in **Zustand** for instant UX. The backend is **stateless** and only receives cart snapshots to improve AI context (e.g. *"what's in my cart?"*).
+| Store | Purpose |
+|-------|---------|
+| `cartStore` | Live cart lines, `applyActions()` from AI |
+| `ordersStore` | Placed/cancelled orders, `placeOrderFromCart()`, `applyOrderActions()` |
+| `menuStore` | Cached menu from API |
+
+The backend is **stateless** except for optional **chat session** hints (`awaitingConfirmation`, `pendingActions`) sent by the client each request. Cart and order **snapshots** are included in chat requests for context.
 
 CORS is enabled with `origin: true` so web and LAN devices can call the API during development.
 
@@ -118,17 +201,47 @@ CORS is enabled with `origin: true` so web and LAN devices can call the API duri
 
 ## AI design and specifications
 
-### Mode selection
+### Request flow
 
 ```
-OPENAI_API_KEY present and valid?
-  ├─ YES → OpenAI Chat Completions (JSON mode)
-  │         └─ on failure → fall back to rule-based parser
-  └─ NO  → rule-based parser only
+POST /api/chat
+  ├─ Greeting (hello, empty history)? → getGreetingReply()
+  ├─ handleStructuredChat()  ← rules-first (always)
+  │     ├─ Session yes/no (place_order | bulk_add)
+  │     ├─ Cancel / list / detail orders
+  │     ├─ Place order → summary + await yes
+  │     ├─ Compound: menu question + cart add
+  │     ├─ Cart add (parseAddActionsFromMessage)
+  │     └─ Menu inquiry (category, chef picks, meal gaps)
+  └─ If null && OPENAI_API_KEY → OpenAI JSON mode
+        └─ on failure → handleStructuredChat() again
 ```
 
-`GET /health` returns `"ai": "openai"` or `"ai": "rules"`.  
-`POST /api/chat` returns `"parsedBy": "openai"` or `"parsedBy": "rules"`.
+`GET /health` → `"ai": "openai"` or `"ai": "rules"`.  
+`POST /api/chat` → `"parsedBy": "openai"` or `"parsedBy": "rules"`.
+
+### Structured chat (`chatOrchestrator.ts`)
+
+| Feature | Trigger | Result |
+|---------|---------|--------|
+| **Place order confirm** | `place order` → user says `yes` | `placeOrderFromCart: true`, cart cleared, order in Orders tab |
+| **Bulk add confirm** | Any single item qty **> 10** | Immediate adds for normal lines; large qty in `pendingActions` until `yes` |
+| **Cancel** | `cancel my last order`, `cancel order #1001` | `orderActions: [{ type: "CANCEL_ORDER", ... }]` |
+| **Order detail** | `what's in my last order` (not cancel) | Formatted line items from client snapshot |
+| **Category list** | `suggestions for bowls`, `what are your desserts` | Scored category match via `mealSuggestions.ts` |
+| **Pairing / gaps** | After cart add | Combo ideas + missing drink/side/dessert |
+
+`HIGH_QUANTITY_THRESHOLD = 10` (configurable in `chatOrchestrator.ts`).
+
+### Natural-language parsing (`orderSegmentParser.ts`)
+
+Handles messy voice and chat text without OpenAI:
+
+- **Segments:** split on `and`, `,`, `.` — not on `with` inside *along with*
+- **Quantities:** leading (`4 burgers`), trailing (`bruschetta 3 in quantity`), words (`seven`, `dozen`)
+- **Normalization:** `add.4` → `add 4`, `and also add`, `added to cart`, `along with that`
+- **Matching:** word-boundary menu match; ignores stopwords (`and`, `along`, `that`)
+- **Modifiers:** water size, sandwich spice, etc.
 
 ### OpenAI (when configured)
 
@@ -136,13 +249,24 @@ OPENAI_API_KEY present and valid?
 |---------|--------|
 | Provider | OpenAI (`openai` npm package) |
 | Default model | `gpt-4o-mini` (`OPENAI_MODEL`) |
-| Temperature | `0.2` |
+| Temperature | `0.3` |
 | Response format | `{ type: "json_object" }` |
-| History | Last 6 messages |
+| History | Last 8 messages |
+| Extra context | Cart categories, missing meal categories, session state |
 
-### Rule-based parser (fallback)
+OpenAI is used when structured rules return `null` and for richer phrasing; **core ordering logic works offline** via rules.
 
-No API key required. Implemented in `backend/src/services/ruleBasedParser.ts` — handles compound orders, quantities, modifiers, clear cart, menu questions.
+### Example phrases (rules path)
+
+| You say | Expected behavior |
+|---------|-------------------|
+| `Cancel my last order` | Order cancelled in Orders tab |
+| `Place order` → `yes` | Order placed from cart |
+| `Suggestions for bowls` | Lists all bowl items only |
+| `Add 3 truffle fries and tomato bruschetta of quantity 6` | 3× fries, 6× bruschetta |
+| `seven spicy chicken sandwiches` | 7× sandwich |
+| `Add 40 sparkling water` | Confirms bulk qty; other items add immediately |
+| `What are bowls? Also add 2 soup` | Bowl list + 2× soup in cart |
 
 ---
 
@@ -157,7 +281,29 @@ No API key required. Implemented in `backend/src/services/ruleBasedParser.ts` �
 | `UPDATE_QUANTITY` | Set quantity for `itemId` |
 | `CLEAR` | Empty cart |
 
-Client implementation: `mobile/src/store/cartStore.ts` → `applyActions()`.
+### Order actions (API → client)
+
+| Type | Description |
+|------|-------------|
+| `CANCEL_ORDER` | Cancel by `orderId` or `orderNumber` (defaults to latest placed) |
+| `CANCEL_ALL_ORDERS` | Cancel all placed orders |
+
+### Chat session (optional, client ↔ server)
+
+| Field | Values | Purpose |
+|-------|--------|---------|
+| `awaitingConfirmation` | `place_order` \| `bulk_add` \| `null` | Multi-turn yes/no |
+| `pendingActions` | `CartAction[]` | Large qty holds until confirmed |
+
+### Client flags
+
+| Field | When set | Client behavior |
+|-------|----------|-----------------|
+| `placeOrderFromCart` | User confirmed place order | `ordersStore.placeOrderFromCart()` |
+
+Implementations: `cartStore.applyActions()`, `ordersStore.applyOrderActions()`, `assistant.tsx` persists `sessionContext`.
+
+Tax on client: **8%** on subtotal (cart and placed orders).
 
 ---
 
@@ -169,19 +315,63 @@ Base URL: `http://localhost:3001` (laptop) or `http://<YOUR_LAN_IP>:3001` (phone
 |--------|------|-------------|
 | GET | `/health` | Status + AI mode (`openai` / `rules`) |
 | GET | `/api/menu` | Full menu |
-| POST | `/api/chat` | Parse natural language → `{ reply, actions, parsedBy }` |
+| POST | `/api/chat` | Natural language → reply, actions, orders, session |
 
-Example chat response:
+#### `POST /api/chat` request body
 
 ```json
 {
-  "reply": "Added 2× Spicy Chicken Sandwich (spice: hot), added 1× Still Water (size: large).",
+  "message": "Add 3 truffle parmesan fries and tomato bruschetta of quantity 6",
+  "history": [{ "role": "user", "content": "..." }, { "role": "assistant", "content": "..." }],
+  "cart": {
+    "lines": [{ "lineId": "...", "itemId": "...", "name": "...", "quantity": 1, "unitPrice": 7.5, "modifiers": {} }],
+    "subtotal": 7.5
+  },
+  "orders": [{ "id": "...", "orderNumber": 1001, "status": "placed", "total": 42.5, "itemCount": 3, "createdAt": 0, "lines": [] }],
+  "session": {
+    "awaitingConfirmation": null,
+    "pendingActions": []
+  }
+}
+```
+
+#### Example response (cart add)
+
+```json
+{
+  "reply": "I've added 3× Truffle Parmesan Fries, 6× Tomato Bruschetta.\n\nWhat would you like with your order? These pair nicely:\n• ...",
   "actions": [
-    { "type": "ADD", "itemId": "spicy-chicken-sandwich", "quantity": 2, "modifiers": { "spice": "hot" } },
-    { "type": "ADD", "itemId": "water", "quantity": 1, "modifiers": { "size": "large" } }
+    { "type": "ADD", "itemId": "truffle-fries", "quantity": 3 },
+    { "type": "ADD", "itemId": "tomato-bruschetta", "quantity": 6 }
   ],
-  "parsedBy": "openai",
-  "suggestions": ["Add truffle fries", "View cart"]
+  "orderActions": [],
+  "parsedBy": "rules",
+  "sessionContext": { "awaitingConfirmation": null },
+  "suggestions": ["Place order", "View cart", "Add truffle fries"]
+}
+```
+
+#### Example response (place order — awaiting yes)
+
+```json
+{
+  "reply": "Here's your order summary:\n\n1. 3× Truffle Parmesan Fries — $22.50\n...\n\nReply **yes** to place this order, or **no** to keep editing your cart.",
+  "actions": [],
+  "sessionContext": { "awaitingConfirmation": "place_order" },
+  "suggestions": ["Yes", "No", "View cart"],
+  "parsedBy": "rules"
+}
+```
+
+#### Example response (after user says `yes` to place order)
+
+```json
+{
+  "reply": "Wonderful — your order is placed!...",
+  "actions": [],
+  "placeOrderFromCart": true,
+  "sessionContext": { "awaitingConfirmation": null },
+  "parsedBy": "rules"
 }
 ```
 
@@ -193,24 +383,32 @@ Example chat response:
 viridien_project_intelligent_bistro/
 ├── docker-compose.yml
 ├── docs/
-│   └── SESSION_NOTES.md
+│   ├── SESSION_NOTES.md
+│   └── SESSION_NOTES_2026-05-15.md   # Latest AI + voice + parsing work
 ├── backend/
 │   ├── Dockerfile
-│   ├── .env.example          # copy to .env (gitignored)
+│   ├── .env.example
 │   └── src/
-│       ├── data/menu.ts
-│       ├── services/aiService.ts
-│       ├── services/ruleBasedParser.ts
-│       └── routes/
+│       ├── data/menu.ts              # 30+ items, aliases, modifiers
+│       ├── services/
+│       │   ├── aiService.ts          # OpenAI + orchestration entry
+│       │   ├── chatOrchestrator.ts   # Place/cancel/confirm/add flows
+│       │   ├── mealSuggestions.ts    # Categories, pairings, meal gaps
+│       │   ├── menuInquiry.ts
+│       │   ├── messageNormalizer.ts  # Voice/text cleanup
+│       │   ├── orderSegmentParser.ts
+│       │   ├── orderParser.ts        # Orders cancel/detail
+│       │   └── ruleBasedParser.ts    # Legacy path (partial)
+│       ├── routes/menu.ts, chat.ts
+│       └── types/index.ts
 └── mobile/
-    ├── app.json              # apiUrlLocal + apiUrlDevice
-    ├── babel.config.js
-    ├── app/(tabs)/           # Menu, AI, Cart
-    ├── components/
+    ├── app.json
+    ├── app/(tabs)/                   # Menu, AI, Cart, Orders
     └── src/
-        ├── lib/api.ts        # URL selection + fetch
-        ├── lib/haptics.ts    # Web-safe haptics
-        └── store/
+        ├── lib/api.ts
+        ├── lib/webSpeechRecognition.ts
+        ├── hooks/useVoiceInput.web.ts
+        └── store/cartStore.ts, ordersStore.ts, menuStore.ts
 ```
 
 ---
@@ -371,7 +569,47 @@ npx expo start --web --clear
 
 Open **http://localhost:8081**. The app uses `apiUrlLocal` (`localhost:3001`) automatically.
 
-> Haptics are disabled on web (no crash). Use a physical device to feel haptic feedback.
+> Haptics are disabled on web (no crash). Use a physical device to feel haptic feedback. **Voice input works on web** — see next section.
+
+---
+
+## Voice input (web — Edge / Chrome)
+
+Voice ordering uses the browser **Web Speech API** (not available in Expo Go on phone).
+
+### Requirements
+
+| Requirement | Detail |
+|-------------|--------|
+| Browser | **Microsoft Edge** or **Google Chrome** on desktop |
+| URL | **`http://localhost:8081`** — use `npx expo start --web` |
+| Microphone | Allow when prompted (lock icon → Site permissions → Microphone) |
+| API | `http://localhost:3001` running (Docker or `npm run dev`) |
+
+> **Do not** open the app via `http://192.168.x.x:8081` for voice — Edge blocks the microphone on non-secure LAN URLs. Use **localhost** on the same PC running Expo.
+
+### How to use
+
+1. `cd mobile && npx expo start --web --clear`
+2. Open **http://localhost:8081** in Edge
+3. Go to **AI** tab → tap the **mic** → speak → tap **stop**
+4. Edit the transcript if needed → send
+
+### Behavior
+
+- Live transcript appears in the text field while speaking
+- After **stop**, wait ~1 second before tapping **mic** again (session cooldown for Edge)
+- Status: *Listening…*, *Still listening — reconnecting…*, or inline error if mic blocked
+- **Expo Go (phone):** no mic button / type orders instead
+
+### Troubleshooting voice
+
+| Symptom | Fix |
+|---------|-----|
+| Mic blocked on LAN IP | Use **http://localhost:8081** on PC |
+| Stuck on “reconnecting” | Tap stop, wait 2s, tap mic again; hard refresh (`Ctrl+Shift+R`) |
+| “Voice service unavailable” | Check internet (Edge uses cloud speech); retry |
+| No mic icon | Wrong platform — voice is **web desktop only** |
 
 ---
 
@@ -546,6 +784,12 @@ The Expo mobile app is **not** in Docker. Run it with `npx expo start` on your h
 | Web: Haptics crash | `expo-haptics` on web | Fixed via `src/lib/haptics.ts` — pull latest |
 | Docker pipe error | Docker Desktop not running | Start Docker Desktop |
 | Android emulator API | Wrong host | App auto-uses `10.0.2.2:3001` |
+| Cancel shows item list instead | Old backend / `wantsOrderDetail` bug | Rebuild API: `docker compose up --build -d` |
+| Wrong category (bowls → mains) | Parser matched “sandwich” in sentence | Fixed in `mealSuggestions.ts` (May 2026) |
+| Phantom item (e.g. sandwich not ordered) | Stray `and` segment matched menu | Fixed stopwords + segment split (May 2026) |
+| “Connecting to the kitchen” | Rules parse failed; OpenAI down | Rebuild API; try shorter order; rules work offline |
+| Voice works once then fails | Edge session overlap | Wait ~1s between stop/start; use localhost |
+| `backend/.env` disappeared | File is gitignored | Copy from `backend/.env.example` |
 
 ### Find your correct Wi‑Fi IP (Windows)
 
@@ -568,9 +812,10 @@ http://<YOUR_WIFI_IPV4>:3001/health
 | Layer | Technologies |
 |-------|----------------|
 | Mobile | Expo **SDK 54**, React Native **0.81**, React **19**, Expo Router **6**, NativeWind **4** |
-| Mobile state | Zustand 5, expo-device, expo-haptics (native only) |
+| Mobile state | Zustand 5 (`cart`, `orders`, `menu` stores) |
+| Mobile voice | Web Speech API (`webSpeechRecognition.ts`) — Edge/Chrome desktop |
 | Backend | Express 4, TypeScript 5, Zod 3, OpenAI SDK |
-| AI | `gpt-4o-mini` (optional) + rule-based NLP fallback |
+| AI | **Rules-first** (`chatOrchestrator`, `orderSegmentParser`, `mealSuggestions`) + optional `gpt-4o-mini` |
 | DevOps | Docker multi-stage build, Docker Compose, health checks |
 
 ---

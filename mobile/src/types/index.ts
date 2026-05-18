@@ -75,6 +75,14 @@ export interface ChatMessage {
   timestamp: number;
 }
 
+export interface ClientOrderLineSnapshot {
+  name: string;
+  quantity: number;
+  unitPrice: number;
+  lineTotal: number;
+  modifiers?: Record<string, string>;
+}
+
 export interface ClientOrderSnapshot {
   id: string;
   orderNumber: number;
@@ -82,6 +90,14 @@ export interface ClientOrderSnapshot {
   total: number;
   itemCount: number;
   createdAt: number;
+  lines: ClientOrderLineSnapshot[];
+}
+
+export type ConfirmationType = "place_order" | "bulk_add";
+
+export interface ChatSessionContext {
+  awaitingConfirmation?: ConfirmationType | null;
+  pendingActions?: CartAction[];
 }
 
 export interface ChatResponse {
@@ -90,4 +106,6 @@ export interface ChatResponse {
   orderActions?: OrderAction[];
   suggestions?: string[];
   parsedBy: "openai" | "rules";
+  placeOrderFromCart?: boolean;
+  sessionContext?: ChatSessionContext;
 }

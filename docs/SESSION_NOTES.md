@@ -6,6 +6,12 @@
 
 This document captures decisions, setup steps, issues, and fixes from our working sessions (Cursor + user), so you can refer back without re-reading the full chat.
 
+### Dated session notes
+
+| Date | File | Topics |
+|------|------|--------|
+| **15 May 2026** | [SESSION_NOTES_2026-05-15.md](./SESSION_NOTES_2026-05-15.md) | Smart AI (cancel/place confirm), meal suggestions, quantity parsing, Edge voice, compound orders |
+
 ---
 
 ## 1. Project goal

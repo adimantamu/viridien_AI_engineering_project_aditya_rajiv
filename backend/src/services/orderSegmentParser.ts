@@ -44,6 +44,10 @@ export function normalizeText(text: string): string {
   return text.toLowerCase().replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
 }
 
+function escapeRegex(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /** Fix voice glitches: "add.4" → "add 4", missing spaces after punctuation. */
 export function normalizeOrderMessage(message: string): string {
   return message
@@ -55,6 +59,27 @@ export function normalizeOrderMessage(message: string): string {
     .replace(/\s+/g, " ")
     .trim();
 }
+
+const SEGMENT_STOPWORDS = new Set([
+  "and",
+  "or",
+  "the",
+  "a",
+  "an",
+  "also",
+  "with",
+  "along",
+  "that",
+  "plus",
+  "of",
+  "in",
+  "to",
+  "for",
+  "my",
+  "please",
+  "cart",
+  "be",
+]);
 
 export function splitOrderSegments(message: string): string[] {
   const cleaned = message
@@ -69,17 +94,23 @@ export function splitOrderSegments(message: string): string[] {
     return ["__CLEAR__"];
   }
 
-  const normalized = normalizeOrderMessage(cleaned);
+  const normalized = normalizeOrderMessage(cleaned)
+    .replace(/\band\s+also\b/gi, " and ")
+    .replace(/\balong\s+with\s+that\b/gi, " and ")
+    .replace(/\balong\s+with\b/gi, " and ")
+    .replace(/\b(?:to be )?added to (?:the )?cart\b/gi, "")
+    .replace(/\bthat\s+also\s+add\s+/gi, "")
+    .replace(/\balso\s+add\s+/gi, "");
 
   return normalized
-    .split(/\s+and\s+|\s*,\s*|\s+plus\s+|\s+also\s+|\s+with\s+|\.\s+/i)
+    .split(/\s+and\s+|\s*,\s*|\s+plus\s+|\.\s+/i)
     .map((s) =>
       s
-        .replace(/^(and|also|plus|with)\s+/i, "")
+        .replace(/^(and|also|plus|along|that)\s+/i, "")
         .replace(/^(some|a bit of)\s+/i, "")
         .trim(),
     )
-    .filter(Boolean);
+    .filter((s) => s.length > 0 && !SEGMENT_STOPWORDS.has(normalizeText(s)));
 }
 
 function parseNumberToken(token: string): number | null {
@@ -123,6 +154,7 @@ function tryLeadingQuantity(rest: string): { quantity: number; rest: string; fou
 
 function tryTrailingQuantity(rest: string): { quantity: number; rest: string; found: boolean } {
   const patterns: { re: RegExp; group: number }[] = [
+    { re: /^(.+?)\s+of\s+quantity\s+(\d+)\s*$/i, group: 2 },
     { re: /^(.+?)\s+(\d+)\s+in\s+quantity\s*$/i, group: 2 },
     { re: /^(.+?)\s+quantity\s+(?:of\s+)?(\d+)\s*$/i, group: 2 },
     { re: /^(.+?)\s+(\d+)\s*(?:x|items?|orders?|pieces?|portions?)?\s*$/i, group: 2 },
@@ -177,8 +209,10 @@ function singularizePhrase(phrase: string): string {
 
 export function matchMenuItem(segment: string) {
   const stripped = segment
+    .replace(/\s+of\s+quantity\s+\d+\s*$/i, "")
     .replace(/\s+\d+\s+in\s+quantity\s*$/i, "")
     .replace(/\s+in\s+quantity\s*$/i, "")
+    .replace(/\s+of\s*$/i, "")
     .trim();
 
   const variants = [
@@ -188,18 +222,31 @@ export function matchMenuItem(segment: string) {
   let best: { item: (typeof MENU_ITEMS)[0]; score: number } | null = null;
 
   for (const normalized of variants) {
-    if (!normalized) continue;
+    if (!normalized || normalized.length < 3) continue;
+    if (SEGMENT_STOPWORDS.has(normalized)) continue;
 
     for (const item of MENU_ITEMS) {
       const candidates = [item.name, ...(item.aliases ?? [])].map(normalizeText);
       for (const candidate of candidates) {
+        if (!candidate || candidate.length < 3) continue;
+
         if (normalized === candidate) {
           const score = 1000 + candidate.length;
           if (!best || score > best.score) best = { item, score };
           continue;
         }
-        if (normalized.includes(candidate) || candidate.includes(normalized)) {
-          const score = candidate.length;
+
+        if (candidate.length >= 4 && normalized.length >= 4) {
+          const boundary = new RegExp(`\\b${escapeRegex(candidate)}\\b`, "i");
+          if (boundary.test(normalized)) {
+            const score = 400 + candidate.length;
+            if (!best || score > best.score) best = { item, score };
+            continue;
+          }
+        }
+
+        if (normalized.length >= 5 && candidate.length >= 5 && candidate.includes(normalized)) {
+          const score = 300 + normalized.length;
           if (!best || score > best.score) best = { item, score };
         }
       }
@@ -263,10 +310,12 @@ export function parseAddActionsFromMessage(message: string): CartAction[] {
     if (/^REMOVE /i.test(segment)) continue;
 
     const isRemove = /^remove\s+/i.test(segment);
-    const body = segment.replace(/^REMOVE\s+/i, "");
+    const body = segment
+      .replace(/^REMOVE\s+/i, "")
+      .replace(/^(?:add|include|get|order)\s+/i, "");
     const { quantity, rest } = extractQuantity(body);
     const item = matchMenuItem(rest);
-    if (!item) continue;
+    if (!item || SEGMENT_STOPWORDS.has(normalizeText(rest))) continue;
 
     const modifiers = extractModifiers(`${segment} ${rest}`, item);
 

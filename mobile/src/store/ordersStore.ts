@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CartLine, Order, OrderAction, OrderStatus } from "../types";
+import type { CartLine, ClientOrderSnapshot, Order, OrderAction } from "../types";
 import { useCartStore } from "./cartStore";
 
 const TAX_RATE = 0.08;
@@ -15,14 +15,7 @@ interface OrdersState {
   cancelOrder: (orderId: string) => boolean;
   cancelAllPlaced: () => number;
   applyOrderActions: (actions: OrderAction[]) => void;
-  getOrderSnapshots: () => {
-    id: string;
-    orderNumber: number;
-    status: OrderStatus;
-    total: number;
-    itemCount: number;
-    createdAt: number;
-  }[];
+  getOrderSnapshots: () => ClientOrderSnapshot[];
   activeOrderCount: () => number;
 }
 
@@ -39,6 +32,13 @@ export const useOrdersStore = create<OrdersState>((set, get) => ({
       total: o.total,
       itemCount: o.lines.reduce((sum, l) => sum + l.quantity, 0),
       createdAt: o.createdAt,
+      lines: o.lines.map((line) => ({
+        name: line.name,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+        lineTotal: line.unitPrice * line.quantity,
+        modifiers: Object.keys(line.modifiers).length ? line.modifiers : undefined,
+      })),
     })),
 
   placeOrderFromCart: () => {

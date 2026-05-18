@@ -204,7 +204,10 @@ function handleCompoundMessage(request: ChatRequest): ChatResponse | null {
 
 function handleCartAdd(request: ChatRequest): ChatResponse | null {
   const normalized = normalizeCompoundMessage(request.message);
-  const addText = extractAddText(normalized) || normalized;
+  const addText =
+    messageHasMenuInquiry(normalized) && extractAddText(normalized)
+      ? extractAddText(normalized)
+      : normalized;
   const raw = [...parseAddActionsFromMessage(addText)];
   if (!raw.length) return null;
 
@@ -325,6 +328,11 @@ export function handleStructuredChat(
 
   const compound = handleCompoundMessage(request);
   if (compound) return compound;
+
+  if (messageHasAddIntent(request.message)) {
+    const cartFirst = handleCartAdd(request);
+    if (cartFirst) return cartFirst;
+  }
 
   const menuReply = menuInquiryReply(request);
   if (menuReply) {

@@ -224,7 +224,14 @@ export const MENU_ITEMS: MenuItem[] = [
     price: 22.0,
     image: "salmon",
     tags: ["seafood", "healthy"],
-    aliases: ["salmon", "grilled salmon", "fish"],
+    aliases: [
+      "salmon",
+      "grilled salmon",
+      "grilled atlantic salmon",
+      "atlantic salmon",
+      "grilled atlantic sandwiches",
+      "fish",
+    ],
   },
   {
     id: "classic-ribeye",

@@ -7,6 +7,12 @@ export function normalizeCompoundMessage(message: string): string {
     .replace(/\band\.(\d+)/gi, "and $1")
     .replace(/(\d+)\s*\.(\d+)/g, "$1 $2")
     .replace(/\s+also\s+include\s+/gi, " and ")
+    .replace(/\balong\s+with\s+that\b/gi, " and ")
+    .replace(/\balong\s+with\b/gi, " and ")
+    .replace(/\band\s+also\s+add\b/gi, " and ")
+    .replace(/\balso\s+add\b/gi, " and ")
+    .replace(/\b(?:to be )?added to (?:the )?cart\b/gi, "")
+    .replace(/\band\s+and\b/gi, " and ")
     .replace(/\bthree\s+of\s+them\b/gi, "3 spicy chicken sandwiches")
     .replace(/\b(two|2)\s+of\s+them\b/gi, "2 of them")
     .replace(/\s+/g, " ")
@@ -41,25 +47,38 @@ export function extractMenuInquiryText(message: string): string {
   return message;
 }
 
+/** Full order phrase for cart parsing — not just text after the last "add". */
 export function extractAddText(message: string): string {
   const normalized = normalizeCompoundMessage(message);
-  const match = normalized.match(
-    /\b(?:(?:can you|please)\s+)?(?:add|get|order|i want|i'd like|give me)\b(.+)/i,
-  );
-  if (match?.[1]) {
-    const tail = match[1].trim();
-    const afterQuestion = tail.includes("?") ? (tail.split("?").pop()?.trim() ?? tail) : tail;
-    return afterQuestion;
+
+  if (messageHasMenuInquiry(normalized)) {
+    const match = normalized.match(
+      /\b(?:(?:can you|please)\s+)?(?:add|get|order|i want|i'd like|give me)\b(.+)/i,
+    );
+    if (match?.[1]) {
+      const tail = match[1].trim();
+      return tail.includes("?") ? (tail.split("?").pop()?.trim() ?? tail) : tail;
+    }
   }
-  if (/\b(add|get|order)\b/i.test(normalized)) {
-    return normalized.replace(/^.*?\b(add|get|order)\b/i, "").trim() || normalized;
+
+  if (messageHasAddIntent(normalized)) {
+    return normalized
+      .replace(/^(?:please|can you)\s+/i, "")
+      .replace(/\bthat\s+also\s+add\s+/gi, "")
+      .replace(/\balso\s+add\s+/gi, "")
+      .trim();
   }
+
   return "";
 }
 
 export function messageHasAddIntent(message: string): boolean {
   const text = normalizeCompoundMessage(message);
-  return /\b(add|get|order|i want|i'd like|give me)\b/i.test(text);
+  return (
+    /\b(?:add|added|get|order|include|put)\b/i.test(text) ||
+    /\bto be added\b/i.test(text) ||
+    /\b(i want|i'd like|give me)\b/i.test(text)
+  );
 }
 
 export function messageHasMenuInquiry(message: string): boolean {

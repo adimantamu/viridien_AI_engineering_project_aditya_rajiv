@@ -200,9 +200,11 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
     const fallback = handleStructuredChat(request, session);
     if (fallback) return fallback;
     return {
-      reply: "I'm having trouble connecting to the kitchen. Please try again in a moment.",
+      reply:
+        "I'm having trouble reaching the AI service right now, but you can still order from the Menu tab. Try again in a moment, or use shorter phrases like \"Add 4 craft lemonade and 2 salmon.\"",
       actions: [],
       sessionContext: session ?? { awaitingConfirmation: null },
+      suggestions: ["Add truffle fries", "What are your starters?", "View cart"],
       parsedBy: "rules",
     };
   }

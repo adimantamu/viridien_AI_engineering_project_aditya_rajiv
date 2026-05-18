@@ -1,7 +1,14 @@
 import Constants from "expo-constants";
 import * as Device from "expo-device";
 import { Platform } from "react-native";
-import type { CartLine, ChatMessage, ChatResponse, ClientOrderSnapshot, MenuItem } from "../types";
+import type {
+  CartLine,
+  ChatMessage,
+  ChatResponse,
+  ChatSessionContext,
+  ClientOrderSnapshot,
+  MenuItem,
+} from "../types";
 
 type ApiExtra = {
   apiUrl?: string;
@@ -62,6 +69,7 @@ export async function sendChatMessage(params: {
   history: Pick<ChatMessage, "role" | "content">[];
   cart: { lines: CartLine[]; subtotal: number };
   orders: ClientOrderSnapshot[];
+  session?: ChatSessionContext;
 }): Promise<ChatResponse> {
   return request<ChatResponse>("/api/chat", {
     method: "POST",
