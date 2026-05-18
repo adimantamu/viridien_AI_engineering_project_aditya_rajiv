@@ -1,6 +1,9 @@
 import { MENU_ITEMS } from "../data/menu.js";
 import type { ChatRequest } from "../types/index.js";
 import {
+  normalizeCompoundMessage,
+} from "./messageNormalizer.js";
+import {
   detectMenuCategory,
   formatSmartRecommendations,
   listCategoryItems,
@@ -14,7 +17,7 @@ function formatItemLine(item: (typeof MENU_ITEMS)[0]): string {
 }
 
 export function menuInquiryReply(request: ChatRequest): string | null {
-  const message = request.message.trim();
+  const message = normalizeCompoundMessage(request.message.trim());
   const lower = normalizeText(message);
 
   const completion = mealCompletionReply(request);

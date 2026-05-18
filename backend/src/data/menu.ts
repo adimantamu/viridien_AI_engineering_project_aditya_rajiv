@@ -181,6 +181,7 @@ export const MENU_ITEMS: MenuItem[] = [
       "lava cake",
       "chocolate cake",
       "choc lava cake",
+      "choco lava cake",
       "chocolate lava cake",
       "dessert",
     ],

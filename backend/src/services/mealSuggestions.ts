@@ -1,5 +1,9 @@
 import { MENU_ITEMS, getMenuItemById } from "../data/menu.js";
 import type { ChatRequest, MenuItem } from "../types/index.js";
+import {
+  extractMenuInquiryText,
+  normalizeCompoundMessage,
+} from "./messageNormalizer.js";
 import { matchMenuItem, normalizeText } from "./orderSegmentParser.js";
 
 export const MENU_CATEGORIES = [
@@ -26,13 +30,6 @@ export const CATEGORY_ALIASES: Record<string, MenuCategory> = {
   mains: "Mains",
   entree: "Mains",
   entrees: "Mains",
-  sandwich: "Mains",
-  sandwiches: "Mains",
-  burger: "Mains",
-  burgers: "Mains",
-  steak: "Mains",
-  salmon: "Mains",
-  fish: "Mains",
   bowl: "Bowls",
   bowls: "Bowls",
   grain: "Bowls",
@@ -169,50 +166,93 @@ export function getCartCategories(request: ChatRequest): Set<MenuCategory> {
   return cats;
 }
 
-export function detectMenuCategory(message: string): MenuCategory | null {
-  const lower = normalizeText(message);
+function scoreCategoryInText(text: string, alias: string, category: MenuCategory): number {
+  const lower = normalizeText(text);
+  const aliasPattern = escapeRegex(alias).replace(/\s+/g, "\\s+");
+  const near = `[?.!,]{0,1}\\s{0,40}`;
 
-  for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
-    const aliasPattern = escapeRegex(alias).replace(/\s+/g, "\\s+");
-    const patterns = [
-      new RegExp(
-        `\\b(suggestions?|recommend(?:ations?)?|ideas?|picks?)\\b.*\\b(for|on|about|with)\\b.*\\b${aliasPattern}\\b`,
+  const rules: { pattern: RegExp; points: number }[] = [
+    {
+      pattern: new RegExp(
+        `\\b(different|various|all|what are)\\s+(the\\s+)?(options?|types?|kinds?|dishes?)\\s+(for|of)\\s+${aliasPattern}\\b`,
         "i",
       ),
-      new RegExp(
-        `\\b(for|on|about)\\b.*\\b(the\\s+)?${aliasPattern}\\b.*\\b(suggestions?|recommend(?:ations?)?|ideas?)\\b`,
+      points: 120,
+    },
+    {
+      pattern: new RegExp(
+        `\\b(options?|dishes?|choices|types?)\\s+(for|of)\\s+(the\\s+)?${aliasPattern}\\b`,
         "i",
       ),
-      new RegExp(
-        `\\b(give|show)\\s+(me\\s+)?(some\\s+)?(suggestions?|recommendations?|ideas?)\\s+(for|on|about)\\s+(the\\s+)?${aliasPattern}\\b`,
+      points: 110,
+    },
+    {
+      pattern: new RegExp(
+        `\\b(suggestions?|recommend(?:ations?)?|ideas?)\\s+(for|on|about)\\s+(the\\s+)?${aliasPattern}\\b`,
         "i",
       ),
-      new RegExp(`\\b${aliasPattern}\\b.*\\b(suggestions?|recommend(?:ations?)?|ideas?)\\b`, "i"),
-      new RegExp(`\\brecommend\\w*\\s+(some\\s+)?${aliasPattern}\\b`, "i"),
-      new RegExp(`(options?|items?|dishes?|choices|menu).*(for\\s+)?${aliasPattern}\\b`, "i"),
-      new RegExp(`\\b${aliasPattern}\\s+(options?|items?|dishes?|menu)`, "i"),
-      new RegExp(`what (do you have|('s| is) on).*(the\\s+)?${aliasPattern}\\b`, "i"),
-      new RegExp(`what (are|('s| is)) (your |the )?${aliasPattern}\\b`, "i"),
-      new RegExp(`^(show|list)\\s+(me\\s+)?(the\\s+)?${aliasPattern}\\b`, "i"),
-      new RegExp(`\\b(best|good|nice)\\s+${aliasPattern}\\b`, "i"),
-      new RegExp(`\\bany\\s+${aliasPattern}\\b`, "i"),
-    ];
+      points: 105,
+    },
+    {
+      pattern: new RegExp(`what (are|('s| is)) (your |the )?${aliasPattern}\\b`, "i"),
+      points: 100,
+    },
+    {
+      pattern: new RegExp(
+        `\\b(give|show)\\s+(me\\s+)?(the\\s+)?${aliasPattern}\\b`,
+        "i",
+      ),
+      points: 85,
+    },
+    {
+      pattern: new RegExp(`\\b${aliasPattern}\\s+(options?|items?|dishes?|menu)\\b`, "i"),
+      points: 90,
+    },
+    {
+      pattern: new RegExp(
+        `\\b(suggestions?|recommend)\\b${near}\\b${aliasPattern}\\b`,
+        "i",
+      ),
+      points: 70,
+    },
+    {
+      pattern: new RegExp(`\\b${aliasPattern}\\b${near}\\b(suggestions?|recommend|options?)\\b`, "i"),
+      points: 65,
+    },
+  ];
 
-    if (patterns.some((p) => p.test(lower))) {
-      return category;
+  let score = 0;
+  for (const rule of rules) {
+    if (rule.pattern.test(lower)) {
+      score = Math.max(score, rule.points);
     }
   }
+  return score;
+}
 
-  if (/\b(suggestions?|recommend|ideas?|options?|picks?|what should)\b/i.test(lower)) {
-    for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
-      const aliasPattern = escapeRegex(alias).replace(/\s+/g, "\\s+");
-      if (new RegExp(`\\b${aliasPattern}\\b`, "i").test(lower)) {
-        return category;
+export function detectMenuCategory(message: string): MenuCategory | null {
+  const normalized = normalizeCompoundMessage(message);
+  const inquiryText = extractMenuInquiryText(normalized);
+  const scores: { category: MenuCategory; score: number }[] = [];
+
+  for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
+    const score = scoreCategoryInText(inquiryText, alias, category);
+    if (score > 0) {
+      const existing = scores.find((s) => s.category === category);
+      if (existing) {
+        existing.score = Math.max(existing.score, score);
+      } else {
+        scores.push({ category, score });
       }
     }
   }
 
-  return detectCategoryFromMenuItemMention(lower);
+  if (scores.length) {
+    scores.sort((a, b) => b.score - a.score);
+    return scores[0].category;
+  }
+
+  return detectCategoryFromMenuItemMention(normalizeText(inquiryText));
 }
 
 function detectCategoryFromMenuItemMention(lower: string): MenuCategory | null {
@@ -346,34 +386,33 @@ export function buildComboSuggestions(
 
   const suggestions: { item: MenuItem; reason: string }[] = [];
   const seen = new Set<string>([...cartItemIds, ...anchorItemIds]);
+  const primaryAnchor = anchors[anchors.length - 1];
 
-  for (const anchor of anchors) {
-    const rule = ITEM_PAIRINGS[anchor.id];
-    if (rule) {
-      for (const id of rule.ids) {
-        if (suggestions.length >= max) break;
-        if (seen.has(id)) continue;
-        const item = getMenuItemById(id);
-        if (item) {
-          suggestions.push({ item, reason: rule.note });
-          seen.add(id);
-        }
+  const rule = ITEM_PAIRINGS[primaryAnchor.id];
+  if (rule) {
+    for (const id of rule.ids) {
+      if (suggestions.length >= max) break;
+      if (seen.has(id)) continue;
+      const item = getMenuItemById(id);
+      if (item) {
+        suggestions.push({ item, reason: rule.note });
+        seen.add(id);
       }
     }
+  }
 
-    const plan = CATEGORY_PAIRING_PLAN[anchor.category as MenuCategory];
-    if (plan) {
-      for (const id of plan.pickIds) {
-        if (suggestions.length >= max) break;
-        if (seen.has(id)) continue;
-        const item = getMenuItemById(id);
-        if (item) {
-          suggestions.push({
-            item,
-            reason: `Pairs well with ${anchor.name}`,
-          });
-          seen.add(id);
-        }
+  const plan = CATEGORY_PAIRING_PLAN[primaryAnchor.category as MenuCategory];
+  if (plan) {
+    for (const id of plan.pickIds) {
+      if (suggestions.length >= max) break;
+      if (seen.has(id)) continue;
+      const item = getMenuItemById(id);
+      if (item) {
+        suggestions.push({
+          item,
+          reason: `Goes well with ${primaryAnchor.name}`,
+        });
+        seen.add(id);
       }
     }
   }
@@ -397,10 +436,11 @@ export function buildComboSuggestions(
   if (suggestions.length < 1) return null;
 
   const unique = suggestions.slice(0, max);
-  const anchorNames = anchors.map((a) => a.name).join(", ");
+  const anchorLabel =
+    anchors.length > 1 ? "your order" : primaryAnchor.name;
 
   return (
-    `\n\nWhat would you like with ${anchorNames}? These pair nicely:\n` +
+    `\n\nWhat would you like with ${anchorLabel}? These pair nicely:\n` +
     unique.map((s) => formatPick(s.item, s.reason)).join("\n")
   );
 }

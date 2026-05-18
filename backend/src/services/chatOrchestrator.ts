@@ -7,7 +7,13 @@ import {
   orderListReply,
   parseOrderActions,
 } from "./orderParser.js";
-import { buildMealGapAdvice, postAddAdvice } from "./mealSuggestions.js";
+import {
+  extractAddText,
+  messageHasAddIntent,
+  messageHasMenuInquiry,
+  normalizeCompoundMessage,
+} from "./messageNormalizer.js";
+import { buildMealGapAdvice, postAddAdvice, detectMenuCategory, listCategoryItems } from "./mealSuggestions.js";
 import { dedupeCartActions, parseAddActionsFromMessage } from "./orderSegmentParser.js";
 
 export const HIGH_QUANTITY_THRESHOLD = 10;
@@ -153,10 +159,53 @@ function handleConfirmation(
   return null;
 }
 
+function handleCompoundMessage(request: ChatRequest): ChatResponse | null {
+  const message = normalizeCompoundMessage(request.message);
+  const hasMenu = messageHasMenuInquiry(message);
+  const hasAdd = messageHasAddIntent(message);
+
+  if (!hasMenu || !hasAdd) {
+    return null;
+  }
+
+  const category = detectMenuCategory(message);
+  let menuPart = "";
+  if (category) {
+    menuPart = listCategoryItems(
+      category,
+      `Here are our ${category}:`,
+    );
+  } else {
+    const menuOnly = menuInquiryReply({ ...request, message });
+    if (!menuOnly) return null;
+    menuPart = menuOnly;
+  }
+
+  const cartResponse = handleCartAdd({ ...request, message });
+  if (!cartResponse) {
+    return {
+      reply: menuPart,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["View cart", "Place order"],
+      parsedBy: "rules",
+    };
+  }
+
+  return {
+    ...cartResponse,
+    reply: `${menuPart}\n\n${cartResponse.reply}`,
+    sessionContext: cartResponse.sessionContext,
+    suggestions: cartResponse.suggestions ?? ["View cart", "Place order"],
+    parsedBy: "rules",
+  };
+}
+
 function handleCartAdd(request: ChatRequest): ChatResponse | null {
-  const raw = [
-    ...parseAddActionsFromMessage(request.message),
-  ];
+  const normalized = normalizeCompoundMessage(request.message);
+  const addText = extractAddText(normalized) || normalized;
+  const raw = [...parseAddActionsFromMessage(addText)];
   if (!raw.length) return null;
 
   const actions = dedupeCartActions(raw);
@@ -273,6 +322,9 @@ export function handleStructuredChat(
       parsedBy: "rules",
     };
   }
+
+  const compound = handleCompoundMessage(request);
+  if (compound) return compound;
 
   const menuReply = menuInquiryReply(request);
   if (menuReply) {
