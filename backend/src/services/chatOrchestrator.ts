@@ -23,9 +23,12 @@ import {
   mergeChips,
   postAddAdviceStructured,
 } from "./mealSuggestions.js";
+import { formatModifiersLabel } from "../data/menuModifiers.js";
+import { sizeLabelForAction } from "./sizeParser.js";
+import { parseCartActionsWithOpenAI } from "./openaiCartActions.js";
 import {
   dedupeCartActions,
-  parseAddActionsFromMessage,
+  parseAllCartActionsFromMessage,
   parseUpdateQuantityFromMessage,
 } from "./orderSegmentParser.js";
 
@@ -104,10 +107,14 @@ function describeCartChangeSummary(actions: CartAction[]): string {
     const item = a.itemId ? getMenuItemById(a.itemId) : undefined;
     const name = item?.name ?? "item";
     const qty = a.quantity ?? 1;
-    if (a.type === "ADD") parts.push(`added ${qty}× ${name}`);
-    else if (a.type === "REMOVE") parts.push(`removed ${qty}× ${name}`);
-    else if (a.type === "UPDATE_QUANTITY") parts.push(`set ${name} to ${qty}`);
-    else if (a.type === "CLEAR") parts.push("cleared your cart");
+    const size = sizeLabelForAction(a.itemId, a.modifiers);
+    if (a.type === "ADD") parts.push(`added ${qty}× ${name}${size}`);
+    else if (a.type === "REMOVE") parts.push(`removed ${qty}× ${name}${size}`);
+    else if (a.type === "UPDATE_QUANTITY") parts.push(`set ${name}${size} to ${qty}`);
+    else if (a.type === "SET_MODIFIER" && a.modifiers) {
+      const label = formatModifiersLabel(item, a.modifiers);
+      parts.push(`updated ${name} to ${label || "new options"}`);
+    } else if (a.type === "CLEAR") parts.push("cleared your cart");
   }
   return parts.join(", ");
 }
@@ -191,61 +198,42 @@ function handleConfirmation(
   return null;
 }
 
-function handleCompoundMessage(request: ChatRequest): ChatResponse | null {
-  const message = normalizeCompoundMessage(request.message);
-  const hasMenu = messageHasMenuInquiry(message);
-  const hasAdd = messageHasAddIntent(message);
+async function resolveCartActions(request: ChatRequest, messageOverride?: string): Promise<{
+  actions: CartAction[];
+  parsedBy: "openai" | "rules";
+}> {
+  const req = messageOverride ? { ...request, message: messageOverride } : request;
 
-  if (!hasMenu || !hasAdd) {
-    return null;
+  if (process.env.OPENAI_API_KEY?.trim()) {
+    try {
+      const aiActions = await parseCartActionsWithOpenAI(req);
+      if (aiActions?.length) {
+        return { actions: aiActions, parsedBy: "openai" };
+      }
+    } catch (error) {
+      console.error("[cart] OpenAI parse failed, using rules:", error);
+    }
   }
 
-  const categories = detectMenuCategories(message);
-  let menuPart = "";
-  if (categories.length > 1) {
-    menuPart = buildMultiCategoryMenuResponse(categories).reply;
-  } else if (categories.length === 1) {
-    menuPart = listCategoryItems(categories[0], `Here are our ${categories[0]}:`);
-  } else {
-    const menuOnly = menuInquiryReply({ ...request, message });
-    if (!menuOnly) return null;
-    menuPart = menuOnly;
-  }
-
-  const cartResponse = handleCartAdd({ ...request, message });
-  if (!cartResponse) {
-    return {
-      reply: menuPart,
-      actions: [],
-      orderActions: [],
-      sessionContext: { awaitingConfirmation: null },
-      suggestions: ["View cart", "Place order"],
-      parsedBy: "rules",
-    };
-  }
-
-  return {
-    ...cartResponse,
-    reply: `${menuPart}\n\n${cartResponse.reply}`,
-    sessionContext: cartResponse.sessionContext,
-    suggestions: cartResponse.suggestions ?? ["View cart", "Place order"],
-    parsedBy: "rules",
-  };
-}
-
-function handleCartAdd(request: ChatRequest): ChatResponse | null {
-  const normalized = normalizeCompoundMessage(request.message);
+  const normalized = normalizeCompoundMessage(req.message);
   const addText =
     messageHasMenuInquiry(normalized) && extractAddText(normalized)
       ? extractAddText(normalized)
       : normalized;
-  const raw = [
-    ...parseAddActionsFromMessage(addText),
+  const rules = dedupeCartActions([
+    ...parseAllCartActionsFromMessage(addText),
     ...parseUpdateQuantityFromMessage(addText),
-  ];
-  if (!raw.length) return null;
+  ]);
+  return { actions: rules, parsedBy: "rules" };
+}
 
-  const actions = dedupeCartActions(raw);
+export function buildCartMutationResponse(
+  request: ChatRequest,
+  actions: CartAction[],
+  parsedBy: "openai" | "rules" = "rules",
+): ChatResponse | null {
+  if (!actions.length) return null;
+
   const { immediate, pending } = splitByQuantityThreshold(actions);
 
   const addedIds = immediate.filter((a) => a.type === "ADD").map((a) => a.itemId!);
@@ -256,7 +244,10 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
 
   if (immediate.length) {
     const summary = describeCartChangeSummary(immediate);
-    const advice = addedIds.length ? postAddAdviceStructured(request, addedIds) : null;
+    const advice =
+      addedIds.length && addedIds.length <= 2
+        ? postAddAdviceStructured(request, addedIds)
+        : null;
     if (advice) {
       recommendationBlocks = advice.blocks;
       suggestionChips = mergeChips(advice.chips);
@@ -285,7 +276,7 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
         { label: "📋 View cart", message: "What's in my cart?" },
       ],
       recommendationBlocks,
-      parsedBy: "rules",
+      parsedBy,
     };
   }
 
@@ -301,15 +292,62 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
     suggestions: chips.map((c) => c.message),
     suggestionChips: chips,
     recommendationBlocks,
+    parsedBy,
+  };
+}
+
+async function handleCompoundMessage(request: ChatRequest): Promise<ChatResponse | null> {
+  const message = normalizeCompoundMessage(request.message);
+  const hasMenu = messageHasMenuInquiry(message);
+  const hasAdd = messageHasAddIntent(message);
+
+  if (!hasMenu || !hasAdd) {
+    return null;
+  }
+
+  const categories = detectMenuCategories(message);
+  let menuPart = "";
+  if (categories.length > 1) {
+    menuPart = buildMultiCategoryMenuResponse(categories).reply;
+  } else if (categories.length === 1) {
+    menuPart = listCategoryItems(categories[0], `Here are our ${categories[0]}:`);
+  } else {
+    const menuOnly = menuInquiryReply({ ...request, message });
+    if (!menuOnly) return null;
+    menuPart = menuOnly;
+  }
+
+  const cartResponse = await handleCartAdd({ ...request, message });
+  if (!cartResponse) {
+    return {
+      reply: menuPart,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["View cart", "Place order"],
+      parsedBy: "rules",
+    };
+  }
+
+  return {
+    ...cartResponse,
+    reply: `${menuPart}\n\n${cartResponse.reply}`,
+    sessionContext: cartResponse.sessionContext,
+    suggestions: cartResponse.suggestions ?? ["View cart", "Place order"],
     parsedBy: "rules",
   };
 }
 
+async function handleCartAdd(request: ChatRequest): Promise<ChatResponse | null> {
+  const { actions, parsedBy } = await resolveCartActions(request);
+  return buildCartMutationResponse(request, actions, parsedBy);
+}
+
 /** Structured flows that should run before generic OpenAI / cart-fail paths. */
-export function handleStructuredChat(
+export async function handleStructuredChat(
   request: ChatRequest,
   session?: ChatSessionContext,
-): ChatResponse | null {
+): Promise<ChatResponse | null> {
   const activeSession = session ?? request.session;
   const confirmation = handleConfirmation(request, activeSession);
   if (confirmation) return confirmation;
@@ -376,18 +414,18 @@ export function handleStructuredChat(
     };
   }
 
-  const compound = handleCompoundMessage(request);
+  const compound = await handleCompoundMessage(request);
   if (compound) return compound;
 
   const menuResponse = buildMenuInquiryResponse(request);
   if (menuResponse) return menuResponse;
 
   if (messageHasCartMutation(request.message)) {
-    const cartFirst = handleCartAdd(request);
+    const cartFirst = await handleCartAdd(request);
     if (cartFirst) return cartFirst;
   }
 
-  const cartAdd = handleCartAdd(request);
+  const cartAdd = await handleCartAdd(request);
   if (cartAdd) return cartAdd;
 
   const cartView = handleCartView(request);

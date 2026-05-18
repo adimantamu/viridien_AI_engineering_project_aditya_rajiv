@@ -1,15 +1,9 @@
-import { Platform } from "react-native";
-import type { UseVoiceInputOptions, UseVoiceInputResult } from "./useVoiceInput.types";
-
+/**
+ * Metro resolves `useVoiceInput` to:
+ * - useVoiceInput.web.ts on web
+ * - useVoiceInput.native.ts on iOS/Android
+ *
+ * This file exists for TypeScript and as a fallback export.
+ */
 export type { UseVoiceInputOptions, UseVoiceInputResult } from "./useVoiceInput.types";
-
-const impl =
-  Platform.OS === "web"
-    ? // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("./useVoiceInput.web")
-    : // eslint-disable-next-line @typescript-eslint/no-require-imports
-      require("./useVoiceInput.native");
-
-export function useVoiceInput(options: UseVoiceInputOptions): UseVoiceInputResult {
-  return impl.useVoiceInput(options);
-}
+export { useVoiceInput } from "./useVoiceInput.native";

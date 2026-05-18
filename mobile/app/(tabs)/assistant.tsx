@@ -3,6 +3,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { hapticImpact, hapticNotification, Haptics } from "@/src/lib/haptics";
 
 import { useVoiceInput } from "@/src/hooks/useVoiceInput";
+import { getVoicePlaceholder, getVoiceStatusLine, showVoiceError } from "@/src/lib/voiceUi";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -377,14 +378,27 @@ export default function AssistantScreen() {
 
 
 
-  const { listening, preparing, available, toggle } = useVoiceInput({
+  const isWeb = Platform.OS === "web";
+
+  const { listening, preparing, partial, available, toggle } = useVoiceInput({
     onTranscriptChange: setInput,
     onFinalTranscript: setInput,
-    onError: (msg) => Alert.alert("Voice input", msg),
+    onError: showVoiceError,
   });
 
   const voiceActive = listening || preparing;
-  const isRecordingHint = listening && partial.startsWith("Recording");
+  const voiceStatus = getVoiceStatusLine({
+    isWeb,
+    listening,
+    preparing,
+    partial: partial ?? "",
+  });
+  const voicePlaceholder = getVoicePlaceholder({
+    isWeb,
+    listening,
+    preparing,
+    partial: partial ?? "",
+  });
 
 
 
@@ -411,35 +425,44 @@ export default function AssistantScreen() {
       >
 
         <ScrollView
-
           ref={scrollRef}
-
-          className="flex-1 px-4 pt-4"
-
+          style={{ flex: 1 }}
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: 16,
+            paddingBottom: 24,
+          }}
+          keyboardShouldPersistTaps="handled"
+          keyboardDismissMode="interactive"
           onContentSizeChange={() => scrollRef.current?.scrollToEnd({ animated: true })}
-
         >
 
           {!greetingLoaded ? (
 
-            <View className="mb-4 flex-row items-center self-start">
-
+            <View
+              style={{
+                marginBottom: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                alignSelf: "flex-start",
+                flexGrow: 0,
+              }}
+            >
               <ActivityIndicator color="#c9a962" />
-
-              <Text className="ml-2 text-sm text-bistro-muted">Welcome...</Text>
-
+              <Text style={{ marginLeft: 8, fontSize: 14, color: "#9a9080" }}>Welcome...</Text>
             </View>
 
           ) : null}
 
           {messages.map((m) => (
-
-            <ChatBubble
-              key={m.id}
-              message={m}
-              onSuggestionSelect={m.role === "assistant" ? (text) => sendMessage(text) : undefined}
-            />
-
+            <View key={m.id} style={{ flexGrow: 0, flexShrink: 0, width: "100%" }}>
+              <ChatBubble
+                message={m}
+                onSuggestionSelect={
+                  m.role === "assistant" ? (text) => sendMessage(text) : undefined
+                }
+              />
+            </View>
           ))}
 
           {voiceActive ? (
@@ -453,26 +476,23 @@ export default function AssistantScreen() {
                   marginRight: 8,
                 }}
               />
-              <Text style={{ color: "#c9a962", fontSize: 13 }}>
-                {preparing && !listening
-                  ? "Transcribing…"
-                  : isRecordingHint
-                    ? "Recording… tap stop when done"
-                    : preparing
-                      ? "Starting microphone…"
-                      : "Listening… speak now"}
-              </Text>
+              <Text style={{ color: "#c9a962", fontSize: 13 }}>{voiceStatus}</Text>
             </View>
           ) : null}
 
           {sending ? (
 
-            <View className="mb-4 flex-row items-center self-start">
-
+            <View
+              style={{
+                marginBottom: 16,
+                flexDirection: "row",
+                alignItems: "center",
+                alignSelf: "flex-start",
+                flexGrow: 0,
+              }}
+            >
               <ActivityIndicator color="#c9a962" />
-
-              <Text className="ml-2 text-sm text-bistro-muted">Thinking...</Text>
-
+              <Text style={{ marginLeft: 8, fontSize: 14, color: "#9a9080" }}>Thinking...</Text>
             </View>
 
           ) : null}
@@ -539,23 +559,7 @@ export default function AssistantScreen() {
 
               onChangeText={setInput}
 
-              placeholder={
-
-                preparing && !listening
-
-                  ? "Transcribing your speech…"
-
-                  : preparing
-
-                    ? "Opening microphone…"
-
-                    : listening
-
-                      ? partial || "Recording… tap stop when finished"
-
-                      : "Add two spicy chicken sandwiches…"
-
-              }
+              placeholder={voicePlaceholder}
 
               placeholderTextColor="#6b6358"
 

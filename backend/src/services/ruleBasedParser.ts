@@ -12,7 +12,7 @@ import {
   extractQuantity,
   matchMenuItem,
   normalizeText,
-  parseAddActionsFromMessage,
+  parseAllCartActionsFromMessage,
   splitOrderSegments,
 } from "./orderSegmentParser.js";
 
@@ -181,7 +181,7 @@ export function parseWithRules(request: ChatRequest): ChatResponse {
 
   const actions = dedupeCartActions([
     ...parseRemoveActions(message),
-    ...parseAddActionsFromMessage(message),
+    ...parseAllCartActionsFromMessage(message),
     ...parseUpdateQuantity(message),
   ]);
 

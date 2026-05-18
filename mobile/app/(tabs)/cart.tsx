@@ -7,15 +7,18 @@ import { CartLineItem } from "@/components/CartLineItem";
 import { Header } from "@/components/Header";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { useCartStore } from "@/src/store/cartStore";
+import { useMenuStore } from "@/src/store/menuStore";
 import { useOrdersStore } from "@/src/store/ordersStore";
 
 export default function CartScreen() {
   const insets = useSafeAreaInsets();
   const router = useRouter();
   const lines = useCartStore((s) => s.lines);
+  const menuItems = useMenuStore((s) => s.items);
   const subtotal = useCartStore((s) => s.subtotal);
   const updateQuantity = useCartStore((s) => s.updateQuantity);
   const removeItem = useCartStore((s) => s.removeItem);
+  const setLineModifier = useCartStore((s) => s.setLineModifier);
   const clearCart = useCartStore((s) => s.clearCart);
   const placeOrderFromCart = useOrdersStore((s) => s.placeOrderFromCart);
 
@@ -72,15 +75,25 @@ export default function CartScreen() {
             }}
             showsVerticalScrollIndicator={false}
           >
-            {lines.map((line) => (
-              <CartLineItem
-                key={line.lineId}
-                line={line}
-                onIncrement={() => updateQuantity(line.lineId, line.quantity + 1)}
-                onDecrement={() => updateQuantity(line.lineId, line.quantity - 1)}
-                onRemove={() => removeItem(line.lineId, line.quantity)}
-              />
-            ))}
+            {lines.map((line) => {
+              const menuItem = menuItems.find((m) => m.id === line.itemId);
+              return (
+                <CartLineItem
+                  key={line.lineId}
+                  line={line}
+                  menuItem={menuItem}
+                  onIncrement={() => updateQuantity(line.lineId, line.quantity + 1)}
+                  onDecrement={() => updateQuantity(line.lineId, line.quantity - 1)}
+                  onRemove={() => removeItem(line.lineId, line.quantity)}
+                  onSizeChange={
+                    menuItem
+                      ? (sizeId) =>
+                          setLineModifier(line.lineId, menuItem, "size", sizeId)
+                      : undefined
+                  }
+                />
+              );
+            })}
 
             <View
               style={{

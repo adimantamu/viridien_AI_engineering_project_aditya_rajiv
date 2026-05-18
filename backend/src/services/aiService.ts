@@ -53,9 +53,16 @@ Rules:
 - Cancel order → CANCEL_ORDER orderActions
 - Place/checkout → summarize cart, ask user to reply "yes" (do not place in actions)
 - Parse multi-item orders into multiple ADD actions with correct itemIds
+- "with three lemonades" after other items = ADD lemonades qty 3 — never attach that quantity to the previous dish
+- "add 4 sandwiches and 7 burgers with 3 lemonades" → ADD sandwich×4, ADD burger×7, ADD lemonade×3
 - "remove one X and add Y" → REMOVE action for X plus ADD for Y in the same response
 - Chained commands: "remove 3 waters and remove 2 sandwiches and then add 3 burgers" → separate actions with exact quantities (3, 2, 3) — never default to quantity 1 when a number or word (three, two) is given
-- "remove", "delete", "take off" → REMOVE (decrease quantity in cart)
+- Sizes: every item has size modifier id "size" with options small, medium, large (prices in catalog sizes={...}). Include modifiers on ADD/REMOVE when user says a size.
+- "add two large sparkling waters" → ADD qty 2, modifiers: {"size":"large"}
+- "remove the small fries" → REMOVE with modifiers {"size":"small"}
+- "change my burger to large" / "make the water medium" → SET_MODIFIER with modifiers {"size":"large"} etc.
+- If no size specified on ADD, default modifiers {"size":"medium"}
+- "remove", "delete", "take off" → REMOVE (decrease quantity in cart); match size when specified
 - Quantities over ${HIGH_QUANTITY_THRESHOLD} need confirmation in reply
 - Single-category questions list only that category; multi-category questions must cover every category the user named
 - suggestions: 3–5 short tap-to-send phrases (e.g. "Add truffle fries", "What are your desserts?")
@@ -117,7 +124,7 @@ async function rulesFallback(
   const menu = await resolveMenuBrowse(request);
   if (menu) return menu;
 
-  const structured = handleStructuredChat(request, session);
+  const structured = await handleStructuredChat(request, session);
   if (structured) return structured;
 
   if (messageHasMenuInquiry(request.message)) {
@@ -148,7 +155,7 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
     return getGreetingReply();
   }
 
-  const structured = handleStructuredChat(request, session);
+  const structured = await handleStructuredChat(request, session);
   if (structured) return structured;
 
   if (messageHasMenuInquiry(request.message)) {
@@ -223,7 +230,7 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
     }
 
     if (wantsPlaceOrderFromAi(request.message) && request.cart?.lines.length) {
-      const placeFlow = handleStructuredChat(request, session);
+      const placeFlow = await handleStructuredChat(request, session);
       if (placeFlow) return placeFlow;
     }
 
@@ -270,6 +277,9 @@ function validateActions(actions: CartAction[]): CartAction[] {
   const validIds = new Set(MENU_ITEMS.map((item) => item.id));
   return actions.filter((action) => {
     if (action.type === "CLEAR") return true;
+    if (action.type === "SET_MODIFIER") {
+      return Boolean(action.itemId && validIds.has(action.itemId) && action.modifiers?.size);
+    }
     if (!action.itemId || !validIds.has(action.itemId)) return false;
     return true;
   });

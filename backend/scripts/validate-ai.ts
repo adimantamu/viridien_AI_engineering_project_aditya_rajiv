@@ -133,10 +133,10 @@ function runParserTests(): TestResult[] {
   });
 }
 
-function runStructuredTests(): TestResult[] {
+async function runStructuredTests(): Promise<TestResult[]> {
   const results: TestResult[] = [];
 
-  const starters = handleStructuredChat(
+  const starters = await handleStructuredChat(
     req("please tell me what are there for starters"),
   );
   results.push({
@@ -149,13 +149,13 @@ function runStructuredTests(): TestResult[] {
     detail: starters?.reply?.slice(0, 120),
   });
 
-  const bowls = handleStructuredChat(req("what bowls do you have?"));
+  const bowls = await handleStructuredChat(req("what bowls do you have?"));
   results.push({
     name: "menu: bowls category",
     ok: Boolean(bowls?.reply && /bowl/i.test(bowls.reply)),
   });
 
-  const startersAndBowls = handleStructuredChat(
+  const startersAndBowls = await handleStructuredChat(
     req("what are the options in starters and bowls?"),
   );
   const blocks = startersAndBowls?.recommendationBlocks ?? [];
@@ -172,7 +172,7 @@ function runStructuredTests(): TestResult[] {
     detail: `blocks: ${blocks.length}, parsedBy: ${startersAndBowls?.parsedBy}`,
   });
 
-  const compound = handleStructuredChat(
+  const compound = await handleStructuredChat(
     req("what are your desserts? add chocolate lava cake"),
   );
   results.push({
@@ -183,7 +183,7 @@ function runStructuredTests(): TestResult[] {
     ),
   });
 
-  const chainedCart = handleStructuredChat(
+  const chainedCart = await handleStructuredChat(
     req(
       "remove three sparkling water and also remove two spicy chicken sandwiches and then you can add three truffle mushroom burgers",
       { cart: sampleCart },
@@ -202,7 +202,7 @@ function runStructuredTests(): TestResult[] {
     detail: chainedCart?.actions?.map((a) => `${a.type}:${a.itemId}×${a.quantity}`).join(", "),
   });
 
-  const removeAdd = handleStructuredChat(
+  const removeAdd = await handleStructuredChat(
     req("remove one spicy chicken sandwich and add sparkling water", { cart: sampleCart }),
   );
   results.push({
@@ -214,13 +214,13 @@ function runStructuredTests(): TestResult[] {
     detail: removeAdd?.actions?.map((a) => `${a.type}:${a.itemId}`).join(", "),
   });
 
-  const cartView = handleStructuredChat(req("What's in my cart?", { cart: sampleCart }));
+  const cartView = await handleStructuredChat(req("What's in my cart?", { cart: sampleCart }));
   results.push({
     name: "cart: view contents",
     ok: Boolean(cartView?.reply?.includes("Spicy Chicken") && !cartView?.actions?.length),
   });
 
-  const place = handleStructuredChat(req("place order", { cart: sampleCart }));
+  const place = await handleStructuredChat(req("place order", { cart: sampleCart }));
   results.push({
     name: "order: place asks confirm",
     ok: Boolean(
@@ -230,7 +230,7 @@ function runStructuredTests(): TestResult[] {
   });
 
   const placeSession = { awaitingConfirmation: "place_order" as const, pendingActions: [] };
-  const confirmYes = handleStructuredChat(
+  const confirmYes = await handleStructuredChat(
     req("yes", { cart: sampleCart, session: placeSession }),
   );
   results.push({
@@ -239,7 +239,7 @@ function runStructuredTests(): TestResult[] {
     detail: confirmYes?.reply?.slice(0, 80),
   });
 
-  const confirmNo = handleStructuredChat(
+  const confirmNo = await handleStructuredChat(
     req("no", { cart: sampleCart, session: placeSession }),
   );
   results.push({
@@ -247,13 +247,13 @@ function runStructuredTests(): TestResult[] {
     ok: Boolean(confirmNo?.reply && !confirmNo?.placeOrderFromCart),
   });
 
-  const cancel = handleStructuredChat(req("cancel my last order", { orders: [sampleOrder] }));
+  const cancel = await handleStructuredChat(req("cancel my last order", { orders: [sampleOrder] }));
   results.push({
     name: "order: cancel last",
     ok: Boolean(cancel?.orderActions?.some((a) => a.type === "CANCEL_ORDER")),
   });
 
-  const orderDetail = handleStructuredChat(
+  const orderDetail = await handleStructuredChat(
     req("what items are in my current order?", { orders: [sampleOrder] }),
   );
   results.push({
@@ -264,7 +264,7 @@ function runStructuredTests(): TestResult[] {
     ),
   });
 
-  const bulk = handleStructuredChat(req("add 15 sparkling waters"));
+  const bulk = await handleStructuredChat(req("add 15 sparkling waters"));
   results.push({
     name: "cart: bulk qty needs confirm",
     ok: Boolean(
@@ -273,7 +273,7 @@ function runStructuredTests(): TestResult[] {
     ),
   });
 
-  const updateQty = handleStructuredChat(
+  const updateQty = await handleStructuredChat(
     req("change spicy chicken sandwich to 1", { cart: sampleCart }),
   );
   results.push({
@@ -308,8 +308,8 @@ function runStructuredTests(): TestResult[] {
   return results;
 }
 
-function main() {
-  const all = [...runParserTests(), ...runStructuredTests()];
+async function main() {
+  const all = [...runParserTests(), ...(await runStructuredTests())];
   const failed = all.filter((r) => !r.ok);
 
   console.log("\n=== Intelligent Bistro AI Validation ===\n");
@@ -323,4 +323,7 @@ function main() {
   }
 }
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

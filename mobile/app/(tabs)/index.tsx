@@ -57,8 +57,8 @@ export default function MenuScreen() {
           <MenuItemCard
             key={item.id}
             item={item}
-            onAdd={() => {
-              addItem(item, 1);
+            onAdd={(modifiers) => {
+              addItem(item, 1, modifiers);
               hapticNotification(Haptics.NotificationFeedbackType.Success);
             }}
           />

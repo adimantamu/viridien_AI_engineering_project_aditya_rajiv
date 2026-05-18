@@ -1,6 +1,7 @@
 import type { MenuItem } from "../types/index.js";
+import { withStandardSizeModifiers } from "./menuModifiers.js";
 
-export const MENU_ITEMS: MenuItem[] = [
+const MENU_ITEMS_RAW: MenuItem[] = [
   {
     id: "spicy-chicken-sandwich",
     name: "Spicy Chicken Sandwich",
@@ -406,20 +407,28 @@ export const MENU_ITEMS: MenuItem[] = [
   },
 ];
 
+export const MENU_ITEMS: MenuItem[] = MENU_ITEMS_RAW.map(withStandardSizeModifiers);
+
 export function getMenuItemById(id: string): MenuItem | undefined {
   return MENU_ITEMS.find((item) => item.id === id);
 }
 
 export function getMenuCatalogForPrompt(): string {
   return MENU_ITEMS.map((item) => {
-    const mods =
+    const sizeMod = item.modifiers?.find((m) => m.id === "size");
+    const sizePrices =
+      sizeMod?.options
+        .map((o) => `${o.id}=$${(item.price + (o.priceDelta ?? 0)).toFixed(2)}`)
+        .join(", ") ?? "n/a";
+    const otherMods =
       item.modifiers
-        ?.map(
+        ?.filter((m) => m.id !== "size")
+        .map(
           (m) =>
             `${m.id}: [${m.options.map((o) => `${o.id}=${o.label}`).join(", ")}]`,
         )
-        .join("; ") ?? "none";
+        .join("; ") ?? "";
     const aliases = item.aliases?.join(", ") ?? "";
-    return `- id="${item.id}" name="${item.name}" price=$${item.price.toFixed(2)} category=${item.category} modifiers={${mods}} aliases=[${aliases}]`;
+    return `- id="${item.id}" name="${item.name}" base=$${item.price.toFixed(2)} sizes={${sizePrices}}${otherMods ? ` other={${otherMods}}` : ""} category=${item.category} aliases=[${aliases}]`;
   }).join("\n");
 }

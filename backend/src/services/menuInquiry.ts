@@ -12,6 +12,7 @@ import {
   type MenuCategory,
 } from "./mealSuggestions.js";
 import { normalizeText } from "./orderSegmentParser.js";
+import { parseSizeInquiryReply } from "./sizeParser.js";
 
 function formatItemLine(item: (typeof MENU_ITEMS)[0]): string {
   return `• ${item.name} — $${item.price.toFixed(2)} — ${item.description}`;
@@ -26,6 +27,18 @@ export function menuInquiryReply(request: ChatRequest): string | null {
 export function buildMenuInquiryResponse(request: ChatRequest): ChatResponse | null {
   const message = normalizeCompoundMessage(request.message.trim());
   const lower = normalizeText(message);
+
+  const sizeInfo = parseSizeInquiryReply(message);
+  if (sizeInfo) {
+    return {
+      reply: sizeInfo,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["Add a large one", "Add a small one", "View cart"],
+      parsedBy: "rules",
+    };
+  }
 
   const completion = mealCompletionReply(request);
   if (completion) {

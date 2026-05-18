@@ -1,5 +1,11 @@
-import { MENU_ITEMS } from "../data/menu.js";
+import { MENU_ITEMS, getMenuItemById } from "../data/menu.js";
+import {
+  SIZE_MODIFIER_ID,
+  defaultModifiersForItem,
+  normalizeSizeToStandard,
+} from "../data/menuModifiers.js";
 import type { CartAction } from "../types/index.js";
+import { extractSizeFromText, parseModifierChangeActions, stripSizeWords } from "./sizeParser.js";
 
 const NUMBER_WORDS: Record<string, number> = {
   a: 1,
@@ -56,8 +62,28 @@ function escapeRegex(text: string): string {
 }
 
 /** Fix voice glitches and normalize chained order phrasing. */
-export function normalizeOrderMessage(message: string): string {
+/** "7 burgers with 3 lemonades" → separate add clauses for rules fallback. */
+export function expandWithClauses(message: string): string {
+  const qty =
+    "(?:\\d+|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|a|an)";
   return message
+    .replace(
+      new RegExp(`\\s+with\\s+(?:also\\s+)?(?=${qty}\\s)`, "gi"),
+      " and add ",
+    )
+    .replace(
+      new RegExp(`\\s+along\\s+with\\s+(?=${qty}\\s)`, "gi"),
+      " and add ",
+    )
+    .replace(
+      new RegExp(`\\s+plus\\s+(?=${qty}\\s)`, "gi"),
+      " and add ",
+    )
+    .replace(/\s+and\s+add\s+add\s+/gi, " and add ");
+}
+
+export function normalizeOrderMessage(message: string): string {
+  return expandWithClauses(message)
     .replace(/([.!?])(?=\S)/g, "$1 ")
     .replace(/\b(add|include|order|get)\.(\d+)/gi, "$1 $2")
     .replace(/\band\.(\d+)/gi, "and $1")
@@ -263,12 +289,14 @@ function singularizePhrase(phrase: string): string {
 
 export function matchMenuItem(segment: string) {
   const stripped = stripSegmentLeadFiller(
-    segment
-      .replace(/\s+of\s+quantity\s+\d+\s*$/i, "")
-      .replace(/\s+\d+\s+in\s+quantity\s*$/i, "")
-      .replace(/\s+in\s+quantity\s*$/i, "")
-      .replace(/\s+of\s*$/i, "")
-      .trim(),
+    stripSizeWords(
+      segment
+        .replace(/\s+of\s+quantity\s+\d+\s*$/i, "")
+        .replace(/\s+\d+\s+in\s+quantity\s*$/i, "")
+        .replace(/\s+in\s+quantity\s*$/i, "")
+        .replace(/\s+of\s*$/i, "")
+        .trim(),
+    ),
   );
 
   const variants = [
@@ -325,33 +353,36 @@ export function extractModifiers(
   segment: string,
   item: (typeof MENU_ITEMS)[0],
 ): Record<string, string> {
-  const mods: Record<string, string> = {};
+  const mods = defaultModifiersForItem(item);
   const lower = segment.toLowerCase();
 
+  const sizeFromText = extractSizeFromText(segment);
+  if (sizeFromText && item.modifiers?.some((m) => m.id === SIZE_MODIFIER_ID)) {
+    mods[SIZE_MODIFIER_ID] = normalizeSizeToStandard(sizeFromText);
+  }
+
+  const lowerNoSize = stripSizeWords(lower);
   if (item.modifiers) {
     for (const modifier of item.modifiers) {
+      if (modifier.id === SIZE_MODIFIER_ID) continue;
       for (const option of modifier.options) {
         const label = option.label.toLowerCase();
         const id = option.id.toLowerCase();
-        if (lower.includes(label) || lower.includes(id.replace(/-/g, " "))) {
+        if (
+          lowerNoSize.includes(label) ||
+          lowerNoSize.includes(id.replace(/-/g, " "))
+        ) {
           mods[modifier.id] = option.id;
         }
       }
     }
   }
 
-  if (item.id === "water" || item.id === "sparkling-water") {
-    if (/\blarge\b/.test(lower)) mods.size = "large";
-    else if (/\bmedium\b/.test(lower)) mods.size = "medium";
-    else if (/\bsmall\b/.test(lower)) mods.size = "small";
-    else mods.size = "medium";
-  }
-
   if (item.id === "spicy-chicken-sandwich") {
-    if (/\bextra[- ]?hot\b/.test(lower)) mods.spice = "extra-hot";
-    else if (/\bhot\b|\bspicy\b/.test(lower)) mods.spice = mods.spice ?? "hot";
-    else if (/\bmild\b/.test(lower)) mods.spice = "mild";
-    else mods.spice = "hot";
+    if (/\bextra[- ]?hot\b/.test(lowerNoSize)) mods.spice = "extra-hot";
+    else if (/\bhot\b|\bspicy\b/.test(lowerNoSize)) mods.spice = mods.spice ?? "hot";
+    else if (/\bmild\b/.test(lowerNoSize)) mods.spice = "mild";
+    else if (!mods.spice) mods.spice = "hot";
   }
 
   return mods;
@@ -369,6 +400,12 @@ export function parseUpdateQuantityFromMessage(message: string): CartAction[] {
   return [{ type: "UPDATE_QUANTITY", itemId: item.id, quantity: qty }];
 }
 
+export function parseAllCartActionsFromMessage(message: string): CartAction[] {
+  const modifierActions = parseModifierChangeActions(message);
+  const addActions = parseAddActionsFromMessage(message);
+  return [...modifierActions, ...addActions];
+}
+
 export function parseAddActionsFromMessage(message: string): CartAction[] {
   const actions: CartAction[] = [];
   const prepared = normalizeOrderMessage(message);
@@ -382,6 +419,10 @@ export function parseAddActionsFromMessage(message: string): CartAction[] {
   for (const segment of segments) {
     if (segment === "__CLEAR__") {
       actions.push({ type: "CLEAR" });
+      continue;
+    }
+
+    if (parseModifierChangeActions(segment).length > 0) {
       continue;
     }
 
@@ -403,8 +444,67 @@ export function parseAddActionsFromMessage(message: string): CartAction[] {
   return actions;
 }
 
-function actionKey(action: CartAction): string {
+export function cartActionKey(action: CartAction): string {
   return `${action.type}:${action.itemId ?? ""}:${JSON.stringify(action.modifiers ?? {})}`;
+}
+
+/** Items explicitly named in the guest message (not cart context). */
+export function itemMentionedInMessage(message: string, itemId: string): boolean {
+  const item = getMenuItemById(itemId);
+  if (!item) return false;
+  const lower = normalizeText(message);
+  const candidates = [item.name, ...(item.aliases ?? [])].map(normalizeText);
+  return candidates.some((c) => c.length >= 3 && (lower.includes(c) || c.includes(lower)));
+}
+
+function parseRulesCartActions(message: string): CartAction[] {
+  const normalized = normalizeOrderMessage(message);
+  return dedupeCartActions([
+    ...parseAllCartActionsFromMessage(normalized),
+    ...parseUpdateQuantityFromMessage(normalized),
+  ]);
+}
+
+/**
+ * OpenAI sometimes re-ADDs everything already in the cart when cart context is shown.
+ * Anchor ADD/REMOVE to what the rules parser (and message text) support.
+ */
+export function reconcileAiCartActions(message: string, aiActions: CartAction[]): CartAction[] {
+  const rules = parseRulesCartActions(message);
+  const rulesMutations = rules.filter(
+    (a) => a.type === "ADD" || a.type === "REMOVE" || a.type === "CLEAR",
+  );
+
+  const aiOther = aiActions.filter(
+    (a) =>
+      a.type === "SET_MODIFIER" ||
+      a.type === "UPDATE_QUANTITY" ||
+      a.type === "CLEAR",
+  );
+
+  if (rulesMutations.length > 0) {
+    const allowed = new Set(rulesMutations.map(cartActionKey));
+    const aiByKey = new Map(
+      aiActions
+        .filter((a) => a.type === "ADD" || a.type === "REMOVE")
+        .map((a) => [cartActionKey(a), a] as const),
+    );
+
+    const merged: CartAction[] = [...aiOther];
+    for (const rule of rulesMutations) {
+      const key = cartActionKey(rule);
+      merged.push(aiByKey.get(key) ?? rule);
+    }
+    return dedupeCartActions(merged);
+  }
+
+  const filtered = aiActions.filter((a) => {
+    if (a.type !== "ADD") return true;
+    if (!a.itemId) return false;
+    return itemMentionedInMessage(message, a.itemId);
+  });
+
+  return dedupeCartActions(filtered.length ? filtered : rules);
 }
 
 /** Merge duplicate item lines in one message — sum ADD/REMOVE quantities per item. */
@@ -417,10 +517,10 @@ export function dedupeCartActions(actions: CartAction[]): CartAction[] {
       return [{ type: "CLEAR" }];
     }
 
-    const key = actionKey(action);
+    const key = cartActionKey(action);
     const existingIdx = indexByKey.get(key);
 
-    if (existingIdx !== undefined) {
+    if (existingIdx !== undefined && action.type !== "SET_MODIFIER") {
       const existing = result[existingIdx];
       if (action.type === "ADD" || action.type === "REMOVE") {
         existing.quantity = (existing.quantity ?? 1) + (action.quantity ?? 1);

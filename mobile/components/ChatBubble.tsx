@@ -9,19 +9,19 @@ interface Props {
 }
 
 /** Split text into segments with optional bold (**…**). */
-function renderFormattedText(content: string, baseClass: string) {
+function renderFormattedText(content: string, color: string) {
   const parts = content.split(/(\*\*[^*]+\*\*)/g);
   return parts.map((part, index) => {
     const bold = part.match(/^\*\*([^*]+)\*\*$/);
     if (bold) {
       return (
-        <Text key={index} className={`${baseClass} font-semibold text-bistro-gold`}>
+        <Text key={index} style={{ color: "#c9a962", fontWeight: "600" }}>
           {bold[1]}
         </Text>
       );
     }
     return (
-      <Text key={index} className={baseClass}>
+      <Text key={index} style={{ color }}>
         {part}
       </Text>
     );
@@ -32,33 +32,74 @@ export function ChatBubble({ message, onSuggestionSelect }: Props) {
   const isUser = message.role === "user";
   const hasBlocks = !isUser && (message.recommendationBlocks?.length ?? 0) > 0;
   const hasChips = !isUser && (message.suggestionChips?.length ?? 0) > 0;
+  const textColor = isUser ? "#0f0e0c" : "#f5f0e6";
 
   return (
-    <View className={`mb-3 max-w-[92%] ${isUser ? "self-end" : "self-start"}`}>
+    <View
+      style={{
+        marginBottom: 12,
+        width: "100%",
+        maxWidth: "100%",
+        alignSelf: isUser ? "flex-end" : "flex-start",
+        flexGrow: 0,
+        flexShrink: 0,
+      }}
+    >
       <View
-        className={`rounded-2xl px-4 py-3 ${
-          isUser
-            ? "rounded-br-md bg-bistro-gold"
-            : "rounded-bl-md border border-bistro-border bg-bistro-card"
-        }`}
+        style={{
+          maxWidth: isUser ? "88%" : "100%",
+          alignSelf: isUser ? "flex-end" : "flex-start",
+          flexGrow: 0,
+        }}
       >
-        <Text className={`text-[15px] leading-[22px] ${isUser ? "text-bistro-bg" : "text-bistro-cream"}`}>
-          {renderFormattedText(
-            message.content.replace(/\n{3,}/g, "\n\n").trim(),
-            isUser ? "text-bistro-bg" : "text-bistro-cream",
-          )}
-        </Text>
+        <View
+          style={{
+            borderRadius: 16,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            flexGrow: 0,
+            ...(isUser
+              ? {
+                  borderBottomRightRadius: 6,
+                  backgroundColor: "#c9a962",
+                }
+              : {
+                  borderBottomLeftRadius: 6,
+                  borderWidth: 1,
+                  borderColor: "#3d3528",
+                  backgroundColor: "#242019",
+                }),
+          }}
+        >
+          <Text style={{ fontSize: 15, lineHeight: 22, color: textColor }}>
+            {renderFormattedText(message.content.replace(/\n{3,}/g, "\n\n").trim(), textColor)}
+          </Text>
+        </View>
 
         {hasBlocks && onSuggestionSelect ? (
-          <RecommendationBlocks
-            blocks={message.recommendationBlocks!}
-            onAddPick={onSuggestionSelect}
-          />
+          <View
+            style={{
+              marginTop: 8,
+              borderRadius: 16,
+              paddingHorizontal: 12,
+              paddingVertical: 10,
+              borderWidth: 1,
+              borderColor: "#3d3528",
+              backgroundColor: "#1f1c18",
+              flexGrow: 0,
+              maxWidth: "100%",
+            }}
+          >
+            <RecommendationBlocks
+              blocks={message.recommendationBlocks!}
+              onAddPick={onSuggestionSelect}
+            />
+          </View>
         ) : null}
       </View>
 
       {hasChips && onSuggestionSelect ? (
-        <View style={{ marginTop: 8, marginLeft: 2 }}>
+        <View style={{ marginTop: 8, marginLeft: 2, flexGrow: 0 }}>
           <SuggestionChips
             chips={message.suggestionChips!}
             onSelect={onSuggestionSelect}

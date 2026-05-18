@@ -95,6 +95,10 @@ export function messageHasCartMutation(message: string): boolean {
     messageHasAddIntent(message) ||
     messageHasRemoveIntent(message) ||
     /^(clear|empty)\s+(my\s+)?cart/i.test(text.trim()) ||
+    /\b(change|update|set|switch|make)\s+.+\s+(to\s+)?(small|medium|large|regular)\b/i.test(
+      text,
+    ) ||
+    /\bsize\s+to\s+(small|medium|large)\b/i.test(text) ||
     /\b(change|update|set)\s+.+\s+to\s+\d+/i.test(text) ||
     /\bmake\s+it\s+\d+/i.test(text)
   );

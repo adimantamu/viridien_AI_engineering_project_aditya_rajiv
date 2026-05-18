@@ -1,20 +1,29 @@
 import { Ionicons } from "@expo/vector-icons";
 import { hapticImpact, hapticSelection, Haptics } from "@/src/lib/haptics";
+import { formatLineModifiers, getSizeModifier } from "@/src/lib/menuModifiers";
 import { Pressable, Text, View } from "react-native";
-import type { CartLine } from "@/src/types";
+import { SizeSelector } from "@/components/SizeSelector";
+import type { CartLine, MenuItem } from "@/src/types";
 
 interface Props {
   line: CartLine;
+  menuItem?: MenuItem;
   onIncrement: () => void;
   onDecrement: () => void;
   onRemove: () => void;
+  onSizeChange?: (sizeId: string) => void;
 }
 
-export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props) {
-  const modLabels = Object.entries(line.modifiers)
-    .filter(([, v]) => v && v !== "none")
-    .map(([k, v]) => `${k}: ${v}`)
-    .join(" · ");
+export function CartLineItem({
+  line,
+  menuItem,
+  onIncrement,
+  onDecrement,
+  onRemove,
+  onSizeChange,
+}: Props) {
+  const modLabels = formatLineModifiers(menuItem, line.modifiers);
+  const sizeMod = menuItem ? getSizeModifier(menuItem) : undefined;
 
   return (
     <View
@@ -55,6 +64,21 @@ export function CartLineItem({ line, onIncrement, onDecrement, onRemove }: Props
           <Ionicons name="trash-outline" size={18} color="#9a9080" />
         </Pressable>
       </View>
+
+      {sizeMod && menuItem && onSizeChange ? (
+        <View style={{ marginTop: 12 }}>
+          <Text style={{ fontSize: 11, fontWeight: "600", color: "#6b6358", marginBottom: 4 }}>
+            SIZE
+          </Text>
+          <SizeSelector
+            item={menuItem}
+            modifier={sizeMod}
+            selectedId={line.modifiers[sizeMod.id] ?? "medium"}
+            onSelect={onSizeChange}
+            compact
+          />
+        </View>
+      ) : null}
 
       <View
         style={{

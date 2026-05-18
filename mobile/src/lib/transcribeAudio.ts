@@ -1,10 +1,13 @@
-import * as FileSystem from "expo-file-system";
+import { File } from "expo-file-system";
 import { getApiBaseUrl } from "./api";
 
 export async function transcribeAudioFile(uri: string, mimeType = "audio/m4a"): Promise<string> {
-  const base64 = await FileSystem.readAsStringAsync(uri, {
-    encoding: FileSystem.EncodingType.Base64,
-  });
+  const file = new File(uri);
+  if (!file.exists) {
+    throw new Error("Recording file not found. Please try again.");
+  }
+
+  const base64 = await file.base64();
 
   const response = await fetch(`${getApiBaseUrl()}/api/transcribe`, {
     method: "POST",

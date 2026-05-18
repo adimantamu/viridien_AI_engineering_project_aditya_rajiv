@@ -185,7 +185,6 @@ export function useVoiceInput({
     listeningRef.current = true;
     setListening(true);
     setPartial("Recording… tap stop when finished");
-    onTranscriptChangeRef.current?.("Recording… tap stop when finished");
   }, [available]);
 
   const stopWhisperRecording = useCallback(async () => {
@@ -198,18 +197,16 @@ export function useVoiceInput({
 
     setPreparing(true);
     setPartial("Transcribing…");
-    onTranscriptChangeRef.current?.("Transcribing…");
 
     try {
+      const statusBeforeStop = await recording.getStatusAsync();
+      const durationMs = statusBeforeStop.durationMillis ?? 0;
+
       await recording.stopAndUnloadAsync();
       const uri = recording.getURI();
       if (!uri) {
         throw new Error("Recording failed — no audio file.");
       }
-
-      const status = await recording.getStatusAsync();
-      const durationMs =
-        status.isLoaded && "durationMillis" in status ? status.durationMillis : 0;
       if (durationMs < 400) {
         throw new Error("Recording too short. Hold the mic, speak, then tap stop.");
       }
@@ -289,25 +286,21 @@ export function useVoiceInput({
   const start = useCallback(async () => {
     if (listeningRef.current || preparing) return;
 
-    setPreparing(true);
     try {
       if (useExpoGoWhisper) {
+        setPreparing(true);
         await startWhisperRecording();
+        setPreparing(false);
       } else {
+        setPreparing(true);
+        onTranscriptChangeRef.current?.("");
         await startNativeSpeech();
       }
     } catch (e) {
       onErrorRef.current?.(e instanceof Error ? e.message : "Could not start voice input");
       listeningRef.current = false;
       setListening(false);
-    } finally {
-      if (!useExpoGoWhisper) {
-        /* native speech clears preparing on "start" event */
-      } else if (listeningRef.current) {
-        setPreparing(false);
-      } else {
-        setPreparing(false);
-      }
+      setPreparing(false);
     }
   }, [preparing, startNativeSpeech, startWhisperRecording]);
 

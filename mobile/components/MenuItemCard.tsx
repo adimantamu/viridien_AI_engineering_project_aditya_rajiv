@@ -1,16 +1,28 @@
 import { Ionicons } from "@expo/vector-icons";
 import { hapticImpact, Haptics } from "@/src/lib/haptics";
+import {
+  computeUnitPrice,
+  defaultModifiersForItem,
+  getSizeModifier,
+} from "@/src/lib/menuModifiers";
+import { useMemo, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 import { AddToCartButton } from "@/components/AddToCartButton";
+import { SizeSelector } from "@/components/SizeSelector";
 import { getMenuIcon } from "@/src/constants/icons";
 import type { MenuItem } from "@/src/types";
 
 interface Props {
   item: MenuItem;
-  onAdd: () => void;
+  onAdd: (modifiers: Record<string, string>) => void;
 }
 
 export function MenuItemCard({ item, onAdd }: Props) {
+  const sizeMod = getSizeModifier(item);
+  const [modifiers, setModifiers] = useState(() => defaultModifiersForItem(item));
+
+  const unitPrice = useMemo(() => computeUnitPrice(item, modifiers), [item, modifiers]);
+
   return (
     <View style={styles.card}>
       <View style={styles.row}>
@@ -22,7 +34,7 @@ export function MenuItemCard({ item, onAdd }: Props) {
             <Text style={styles.name} numberOfLines={2}>
               {item.name}
             </Text>
-            <Text style={styles.price}>${item.price.toFixed(2)}</Text>
+            <Text style={styles.price}>${unitPrice.toFixed(2)}</Text>
           </View>
           <Text style={styles.description} numberOfLines={2}>
             {item.description}
@@ -39,11 +51,26 @@ export function MenuItemCard({ item, onAdd }: Props) {
         </View>
       </View>
 
+      {sizeMod ? (
+        <View style={styles.sizeBlock}>
+          <Text style={styles.sizeLabel}>Size</Text>
+          <SizeSelector
+            item={item}
+            modifier={sizeMod}
+            selectedId={modifiers[sizeMod.id] ?? "medium"}
+            onSelect={(optionId) =>
+              setModifiers((prev) => ({ ...prev, [sizeMod.id]: optionId }))
+            }
+            compact
+          />
+        </View>
+      ) : null}
+
       <View style={styles.footer}>
         <AddToCartButton
           onPress={() => {
             hapticImpact(Haptics.ImpactFeedbackStyle.Light);
-            onAdd();
+            onAdd(modifiers);
           }}
         />
       </View>
@@ -63,6 +90,7 @@ const styles = StyleSheet.create({
   row: {
     flexDirection: "row",
     padding: 16,
+    paddingBottom: 8,
   },
   iconBox: {
     width: 56,
@@ -118,9 +146,20 @@ const styles = StyleSheet.create({
     color: "#8a7340",
     textTransform: "capitalize",
   },
+  sizeBlock: {
+    paddingHorizontal: 16,
+    paddingBottom: 4,
+  },
+  sizeLabel: {
+    fontSize: 12,
+    fontWeight: "600",
+    color: "#9a9080",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
   footer: {
     paddingHorizontal: 16,
     paddingBottom: 16,
-    paddingTop: 0,
+    paddingTop: 4,
   },
 });
