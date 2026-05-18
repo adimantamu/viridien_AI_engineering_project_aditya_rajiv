@@ -98,12 +98,36 @@ export interface ClientCartSnapshot {
   subtotal: number;
 }
 
+export interface ChatSuggestionChip {
+  /** Shown on the chip, e.g. "🍟 Truffle Fries" */
+  label: string;
+  /** Sent to the AI when the guest taps the chip */
+  message: string;
+}
+
+export interface ChatRecommendationPick {
+  itemId: string;
+  name: string;
+  price: number;
+  emoji: string;
+  note: string;
+  addMessage: string;
+}
+
+export interface ChatRecommendationBlock {
+  title: string;
+  titleEmoji: string;
+  picks: ChatRecommendationPick[];
+}
+
 export interface ChatResponse {
   reply: string;
   actions: CartAction[];
   orderActions?: OrderAction[];
   suggestions?: string[];
-  parsedBy: "openai" | "rules";
+  suggestionChips?: ChatSuggestionChip[];
+  recommendationBlocks?: ChatRecommendationBlock[];
+  parsedBy: "openai" | "rules" | "rules-multi" | "openai+rules";
   /** Client should call placeOrderFromCart() when true */
   placeOrderFromCart?: boolean;
   sessionContext?: ChatSessionContext;

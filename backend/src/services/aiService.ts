@@ -10,6 +10,8 @@ import {
   splitByQuantityThreshold,
 } from "./chatOrchestrator.js";
 import { analyzeMealGaps, getCartCategories } from "./mealSuggestions.js";
+import { resolveMenuBrowse } from "./menuBrowseResolver.js";
+import { messageHasMenuInquiry } from "./messageNormalizer.js";
 import { dedupeCartActions } from "./orderSegmentParser.js";
 
 const CartActionSchema = z.object({
@@ -34,21 +36,29 @@ const AiResponseSchema = z.object({
 });
 
 const SYSTEM_PROMPT = `You are the AI maître d' for "The Intelligent Bistro", a premium restaurant ordering assistant.
-Return valid JSON: reply, actions (cart), orderActions (optional), suggestions (optional).
+Return valid JSON only: {"reply": string, "actions": [], "orderActions": [], "suggestions": string[]}
+
+You MUST understand natural, casual phrasing including:
+- "please tell me what are there for starters" → list ALL Starters from the menu with prices
+- "what are the options in starters and bowls" → list EVERY item in BOTH Starters AND Bowls with prices (never only the first category)
+- "what do you have for drinks" / "any desserts?" → list that category only
+- Typos and filler words (please, tell me, there, what are) are normal
 
 Cart action types: ADD, REMOVE, UPDATE_QUANTITY, CLEAR
 Order action types: CANCEL_ORDER, CANCEL_ALL_ORDERS
 
 Rules:
-- Answer menu questions warmly using the MENU CATALOG
-- When user says cancel order / cancel my last order → return CANCEL_ORDER orderActions (do NOT list order items as the only response)
-- When user wants to place/checkout order → summarize cart and ask them to reply "yes" to confirm (do not place in actions)
-- Parse messy multi-item orders into multiple ADD actions
-- For quantities over ${HIGH_QUANTITY_THRESHOLD} of one item, mention you need confirmation in your reply
-- When user asks for suggestions/recommendations for a category (bowls, starters, drinks, etc.), list ONLY items from that category — never unrelated chef picks
-- Suggest real combos (e.g. burger + fries + drink; soup + bread; dessert + espresso)
-- If the cart context lists missing meal categories, proactively suggest 2–3 items from those missing categories
-- Never invent menu item ids
+- Menu browsing questions: answer from MENU CATALOG only — list items with prices, never say you cannot help
+- Never respond with generic errors; always give a useful menu or cart answer
+- Cancel order → CANCEL_ORDER orderActions
+- Place/checkout → summarize cart, ask user to reply "yes" (do not place in actions)
+- Parse multi-item orders into multiple ADD actions with correct itemIds
+- "remove one X and add Y" → REMOVE action for X plus ADD for Y in the same response
+- Chained commands: "remove 3 waters and remove 2 sandwiches and then add 3 burgers" → separate actions with exact quantities (3, 2, 3) — never default to quantity 1 when a number or word (three, two) is given
+- "remove", "delete", "take off" → REMOVE (decrease quantity in cart)
+- Quantities over ${HIGH_QUANTITY_THRESHOLD} need confirmation in reply
+- Single-category questions list only that category; multi-category questions must cover every category the user named
+- suggestions: 3–5 short tap-to-send phrases (e.g. "Add truffle fries", "What are your desserts?")
 
 MENU CATALOG:
 `;
@@ -100,6 +110,37 @@ export function isOpenAiConfigured(): boolean {
   return Boolean(process.env.OPENAI_API_KEY?.trim());
 }
 
+async function rulesFallback(
+  request: ChatRequest,
+  session?: ChatRequest["session"],
+): Promise<ChatResponse> {
+  const menu = await resolveMenuBrowse(request);
+  if (menu) return menu;
+
+  const structured = handleStructuredChat(request, session);
+  if (structured) return structured;
+
+  if (messageHasMenuInquiry(request.message)) {
+    return {
+      reply:
+        '🥗 Try asking "What are your starters?" or "Show me the menu" — I can list every category with prices.',
+      actions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["What are your starters?", "What are your desserts?", "Show me the menu"],
+      parsedBy: "rules",
+    };
+  }
+
+  return {
+    reply:
+      'Tell me what you\'d like — e.g. "Add two burgers", "What are your starters?", or "Place order".',
+    actions: [],
+    sessionContext: { awaitingConfirmation: null },
+    suggestions: ["What are your starters?", "Add spicy chicken sandwich", "Place order"],
+    parsedBy: "rules",
+  };
+}
+
 export async function processChatMessage(request: ChatRequest): Promise<ChatResponse> {
   const session = request.session;
 
@@ -110,15 +151,14 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
   const structured = handleStructuredChat(request, session);
   if (structured) return structured;
 
+  if (messageHasMenuInquiry(request.message)) {
+    const menu = await resolveMenuBrowse(request);
+    if (menu) return menu;
+  }
+
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (!apiKey) {
-    return {
-      reply: 'Tell me what you\'d like — e.g. "Add two burgers" or "What are your starters?"',
-      actions: [],
-      sessionContext: { awaitingConfirmation: null },
-      suggestions: ["What are your starters?", "Add spicy chicken sandwich", "Place order"],
-      parsedBy: "rules",
-    };
+    return rulesFallback(request, session);
   }
 
   try {
@@ -139,19 +179,19 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
 
     const historyText =
       request.history
-        ?.slice(-8)
+        ?.slice(-10)
         .map((m) => `${m.role}: ${m.content}`)
         .join("\n") ?? "";
 
     const completion = await openai.chat.completions.create({
-      model: process.env.OPENAI_MODEL ?? "gpt-4o-mini",
-      temperature: 0.3,
+      model: process.env.OPENAI_MODEL ?? "gpt-4o",
+      temperature: 0.2,
       response_format: { type: "json_object" },
       messages: [
         { role: "system", content: SYSTEM_PROMPT + getMenuCatalogForPrompt() },
         {
           role: "user",
-          content: `${historyText ? `Conversation:\n${historyText}\n\n` : ""}User: ${request.message}${cartContext}${ordersContext}${sessionContext}\n\nJSON: {"reply","actions","orderActions","suggestions"}`,
+          content: `${historyText ? `Conversation:\n${historyText}\n\n` : ""}User: ${request.message}${cartContext}${ordersContext}${sessionContext}\n\nRespond with JSON only.`,
         },
       ],
     });
@@ -183,30 +223,14 @@ export async function processChatMessage(request: ChatRequest): Promise<ChatResp
     }
 
     if (wantsPlaceOrderFromAi(request.message) && request.cart?.lines.length) {
-      return (
-        handleStructuredChat(request, session) ?? {
-          reply: parsed.reply,
-          actions: [],
-          sessionContext: { awaitingConfirmation: "place_order" },
-          suggestions: ["Yes", "No", "View cart"],
-          parsedBy: "openai",
-        }
-      );
+      const placeFlow = handleStructuredChat(request, session);
+      if (placeFlow) return placeFlow;
     }
 
     return guardHighQuantityActions(base, session);
   } catch (error) {
     console.error("[chat] OpenAI failed:", error);
-    const fallback = handleStructuredChat(request, session);
-    if (fallback) return fallback;
-    return {
-      reply:
-        "I'm having trouble reaching the AI service right now, but you can still order from the Menu tab. Try again in a moment, or use shorter phrases like \"Add 4 craft lemonade and 2 salmon.\"",
-      actions: [],
-      sessionContext: session ?? { awaitingConfirmation: null },
-      suggestions: ["Add truffle fries", "What are your starters?", "View cart"],
-      parsedBy: "rules",
-    };
+    return rulesFallback(request, session);
   }
 }
 

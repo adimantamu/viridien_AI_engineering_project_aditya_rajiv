@@ -1,14 +1,15 @@
 import { MENU_ITEMS } from "../data/menu.js";
-import type { ChatRequest } from "../types/index.js";
+import type { ChatRequest, ChatResponse } from "../types/index.js";
+import { normalizeCompoundMessage } from "./messageNormalizer.js";
 import {
-  normalizeCompoundMessage,
-} from "./messageNormalizer.js";
-import {
-  detectMenuCategory,
+  buildCategoryMenuResponse,
+  buildMultiCategoryMenuResponse,
+  detectMenuCategories,
   formatSmartRecommendations,
-  listCategoryItems,
   mealCompletionReply,
+  mergeChips,
   pairingAdviceReply,
+  type MenuCategory,
 } from "./mealSuggestions.js";
 import { normalizeText } from "./orderSegmentParser.js";
 
@@ -17,22 +18,61 @@ function formatItemLine(item: (typeof MENU_ITEMS)[0]): string {
 }
 
 export function menuInquiryReply(request: ChatRequest): string | null {
+  const built = buildMenuInquiryResponse(request);
+  return built?.reply ?? null;
+}
+
+/** Rules-first menu Q&A — always preferred over OpenAI for browsing. */
+export function buildMenuInquiryResponse(request: ChatRequest): ChatResponse | null {
   const message = normalizeCompoundMessage(request.message.trim());
   const lower = normalizeText(message);
 
   const completion = mealCompletionReply(request);
-  if (completion) return completion;
+  if (completion) {
+    return {
+      reply: completion,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["Place order", "What are your desserts?", "Add truffle fries"],
+      parsedBy: "rules",
+    };
+  }
 
   const pairing = pairingAdviceReply(request);
-  if (pairing) return pairing;
+  if (pairing) {
+    return {
+      reply: pairing,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["Add truffle fries", "Place order", "View cart"],
+      parsedBy: "rules",
+    };
+  }
 
-  const category = detectMenuCategory(message);
-  if (category) {
+  const categories = detectMenuCategories(message);
+  if (categories.length) {
     const isSuggestion = /\b(suggestions?|recommend(?:ations?)?|ideas?|picks?)\b/i.test(lower);
-    const intro = isSuggestion
-      ? `Great choice — here are some ${category} I'd suggest:`
-      : undefined;
-    return listCategoryItems(category, intro);
+    const rich =
+      categories.length > 1
+        ? buildMultiCategoryMenuResponse(categories, { isSuggestion })
+        : buildCategoryMenuResponse(categories[0], {
+            isSuggestion,
+            intro: isSuggestion
+              ? `✨ Lovely choice — here are ${categories[0]} our guests love:`
+              : `${CATEGORY_INTRO(categories[0])}`,
+          });
+    return {
+      reply: rich.reply,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: rich.chips.map((c) => c.message),
+      suggestionChips: rich.chips,
+      recommendationBlocks: rich.blocks,
+      parsedBy: categories.length > 1 ? "rules-multi" : "rules",
+    };
   }
 
   if (
@@ -54,11 +94,33 @@ export function menuInquiryReply(request: ChatRequest): string | null {
       })
       .join("\n\n");
 
-    return `Here's our menu at a glance:\n\n${sections}\n\nAsk for a category (e.g. "What are your starters?") or order by saying "Add two spicy chicken sandwiches."`;
+    const chips = mergeChips(
+      ["Starters", "Mains", "Bowls", "Drinks", "Desserts"].map((cat) => ({
+        label: `📋 ${cat}`,
+        message: `What are your ${cat.toLowerCase()}?`,
+      })),
+    );
+
+    return {
+      reply: `🍽️ **Welcome to our menu!**\n\nHere's everything at a glance:\n\n${sections}\n\nAsk about any category — e.g. "What are your starters?" — or tap a suggestion below.`,
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: chips.map((c) => c.message),
+      suggestionChips: chips,
+      parsedBy: "rules",
+    };
   }
 
   if (/recommend|suggestion|what should i (get|order)|what('s| is) good/i.test(lower)) {
-    return formatSmartRecommendations(request);
+    return {
+      reply: formatSmartRecommendations(request),
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["What are your starters?", "Add spicy chicken sandwich", "Place order"],
+      parsedBy: "rules",
+    };
   }
 
   const priceMatch = lower.match(/how much (is|are|for)\s+(?:the\s+)?(.+?)(?:\?|$)/);
@@ -73,9 +135,41 @@ export function menuInquiryReply(request: ChatRequest): string | null {
       );
     });
     if (item) {
-      return `${item.name} is $${item.price.toFixed(2)}. Say "Add ${item.name.toLowerCase()}" to order.`;
+      return {
+        reply: `💰 **${item.name}** is **$${item.price.toFixed(2)}**.\n\nSay "Add ${item.name.toLowerCase()}" and I'll pop it in your cart.`,
+        actions: [],
+        orderActions: [],
+        sessionContext: { awaitingConfirmation: null },
+        suggestions: [`Add ${item.name.toLowerCase()}`, "View cart", "What are your starters?"],
+        suggestionChips: [
+          { label: `➕ ${item.name}`, message: `Add ${item.name}` },
+          { label: "📋 Starters", message: "What are your starters?" },
+        ],
+        parsedBy: "rules",
+      };
     }
   }
 
   return null;
+}
+
+function CATEGORY_INTRO(category: MenuCategory): string {
+  switch (category) {
+    case "Starters":
+      return "🥗 **Starters** — perfect to begin your meal:";
+    case "Mains":
+      return "🍔 **Mains** — hearty signatures from our kitchen:";
+    case "Bowls":
+      return "🥙 **Bowls** — balanced, flavourful one-bowl meals:";
+    case "Salads":
+      return "🥬 **Salads** — fresh and satisfying:";
+    case "Sides":
+      return "🍟 **Sides** — the perfect accompaniment:";
+    case "Drinks":
+      return "🥤 **Drinks** — to sip and refresh:";
+    case "Desserts":
+      return "🍰 **Desserts** — sweet finishes:";
+    default:
+      return `Here are our ${category}:`;
+  }
 }

@@ -1,5 +1,11 @@
 import { MENU_ITEMS, getMenuItemById } from "../data/menu.js";
-import type { ChatRequest, MenuItem } from "../types/index.js";
+import type {
+  ChatRecommendationBlock,
+  ChatRecommendationPick,
+  ChatRequest,
+  ChatSuggestionChip,
+  MenuItem,
+} from "../types/index.js";
 import {
   extractMenuInquiryText,
   normalizeCompoundMessage,
@@ -151,6 +157,144 @@ function formatPick(item: MenuItem, reason?: string): string {
     : `• ${item.name} (${price}) — ${item.description}`;
 }
 
+const CATEGORY_EMOJI: Record<MenuCategory, string> = {
+  Starters: "🥗",
+  Mains: "🍔",
+  Bowls: "🥙",
+  Salads: "🥬",
+  Sides: "🍟",
+  Drinks: "🥤",
+  Desserts: "🍰",
+};
+
+const ITEM_EMOJI: Record<string, string> = {
+  "truffle-fries": "🍟",
+  "garlic-bread": "🥖",
+  "onion-rings": "🧅",
+  "coleslaw": "🥗",
+  "craft-cola": "🥤",
+  "craft-lemonade": "🍋",
+  "sparkling-water": "💧",
+  "still-water": "💧",
+  "iced-tea": "🧊",
+  "espresso": "☕",
+  "chocolate-lava-cake": "🍫",
+  "ny-cheesecake": "🍰",
+  "citrus-sorbet": "🍨",
+  "spicy-chicken-sandwich": "🌶️",
+  "truffle-mushroom-burger": "🍄",
+  "classic-ribeye": "🥩",
+  "grilled-salmon": "🐟",
+  "soup-du-jour": "🍲",
+  "tomato-bruschetta": "🍅",
+  "harvest-bowl": "🌾",
+  "caesar-salad": "🥗",
+  "shrimp-cocktail": "🦐",
+  "poke-bowl": "🍣",
+};
+
+const PICK_NOTE_OVERRIDES: Record<string, string> = {
+  "truffle-fries": "Golden truffle parmesan crunch",
+  "craft-cola": "Classic fizz with a rich main",
+  "craft-lemonade": "Bright citrus — cuts through richness",
+  "garlic-bread": "Warm, buttery steakhouse classic",
+  "chocolate-lava-cake": "Indulgent sweet finish",
+  "sparkling-water": "Crisp palate cleanser",
+  "caesar-salad": "Fresh greens on the side",
+  "coleslaw": "Cool crunch for spicy mains",
+  "iced-tea": "Refreshing Southern-style sip",
+  "espresso": "Bold finish after dessert",
+  "citrus-sorbet": "Light, zesty closer",
+};
+
+function emojiForItem(item: MenuItem): string {
+  return ITEM_EMOJI[item.id] ?? CATEGORY_EMOJI[item.category as MenuCategory] ?? "✨";
+}
+
+function toRecommendationPick(item: MenuItem, reason: string): ChatRecommendationPick {
+  return {
+    itemId: item.id,
+    name: item.name,
+    price: item.price,
+    emoji: emojiForItem(item),
+    note: PICK_NOTE_OVERRIDES[item.id] ?? reason,
+    addMessage: `Add ${item.name}`,
+  };
+}
+
+function chipFromPick(pick: ChatRecommendationPick): ChatSuggestionChip {
+  return {
+    label: `${pick.emoji} ${pick.name}`,
+    message: pick.addMessage,
+  };
+}
+
+function collectComboSuggestions(
+  anchorItemIds: string[],
+  cartItemIds: Set<string>,
+  max = 5,
+): { item: MenuItem; reason: string }[] {
+  const anchors = anchorItemIds
+    .map((id) => getMenuItemById(id))
+    .filter((x): x is MenuItem => Boolean(x));
+
+  if (!anchors.length) return [];
+
+  const suggestions: { item: MenuItem; reason: string }[] = [];
+  const seen = new Set<string>([...cartItemIds, ...anchorItemIds]);
+  const primaryAnchor = anchors[anchors.length - 1];
+
+  const rule = ITEM_PAIRINGS[primaryAnchor.id];
+  if (rule) {
+    for (const id of rule.ids) {
+      if (suggestions.length >= max) break;
+      if (seen.has(id)) continue;
+      const item = getMenuItemById(id);
+      if (item) {
+        suggestions.push({ item, reason: rule.note });
+        seen.add(id);
+      }
+    }
+  }
+
+  const plan = CATEGORY_PAIRING_PLAN[primaryAnchor.category as MenuCategory];
+  if (plan) {
+    for (const id of plan.pickIds) {
+      if (suggestions.length >= max) break;
+      if (seen.has(id)) continue;
+      const item = getMenuItemById(id);
+      if (item) {
+        suggestions.push({
+          item,
+          reason: `Chef's pick with ${primaryAnchor.name}`,
+        });
+        seen.add(id);
+      }
+    }
+  }
+
+  if (suggestions.length < 2) {
+    const anchorCats = new Set(anchors.map((a) => a.category as MenuCategory));
+    for (const cat of anchorCats) {
+      const catPlan = CATEGORY_PAIRING_PLAN[cat];
+      if (!catPlan) continue;
+      for (const nextCat of catPlan.nextCategories) {
+        const items = pickItemsForCategory(nextCat, seen, 2, catPlan.pickIds);
+        for (const item of items) {
+          if (suggestions.length >= max) break;
+          suggestions.push({
+            item,
+            reason: `Balances your ${cat.toLowerCase()}`,
+          });
+          seen.add(item.id);
+        }
+      }
+    }
+  }
+
+  return suggestions.slice(0, max);
+}
+
 export function getCartItemIds(request: ChatRequest): Set<string> {
   return new Set((request.cart?.lines ?? []).map((l) => l.itemId));
 }
@@ -199,6 +343,38 @@ function scoreCategoryInText(text: string, alias: string, category: MenuCategory
     },
     {
       pattern: new RegExp(
+        `\\bwhat\\s+(?:are\\s+)?(?:your\\s+)?${aliasPattern}\\s+do\\s+you\\s+(have|serve|offer)\\b`,
+        "i",
+      ),
+      points: 115,
+    },
+    {
+      pattern: new RegExp(
+        `\\bwhat\\s+(are|is)\\s+(there\\s+)?(for|in)\\s+(the\\s+)?${aliasPattern}\\b`,
+        "i",
+      ),
+      points: 118,
+    },
+    {
+      pattern: new RegExp(
+        `\\btell\\s+me\\s+(what\\s+)?(are\\s+)?(there\\s+)?(for|in)\\s+(the\\s+)?${aliasPattern}\\b`,
+        "i",
+      ),
+      points: 118,
+    },
+    {
+      pattern: new RegExp(
+        `\\bwhat\\s+do\\s+you\\s+have\\s+(for|in)\\s+(the\\s+)?${aliasPattern}\\b`,
+        "i",
+      ),
+      points: 112,
+    },
+    {
+      pattern: new RegExp(`\\b(there\\s+)?(for|in)\\s+(the\\s+)?${aliasPattern}\\b`, "i"),
+      points: 55,
+    },
+    {
+      pattern: new RegExp(
         `\\b(give|show)\\s+(me\\s+)?(the\\s+)?${aliasPattern}\\b`,
         "i",
       ),
@@ -230,29 +406,121 @@ function scoreCategoryInText(text: string, alias: string, category: MenuCategory
   return score;
 }
 
-export function detectMenuCategory(message: string): MenuCategory | null {
-  const normalized = normalizeCompoundMessage(message);
-  const inquiryText = extractMenuInquiryText(normalized);
-  const scores: { category: MenuCategory; score: number }[] = [];
+function isCategoryBrowseQuestion(lower: string): boolean {
+  return (
+    /\b(options?|choices|dishes?|items?|menu|what are|what do you have|suggestions?|recommend|tell me|show|list|have)\b/i.test(
+      lower,
+    ) || /\bwhat\s+(are|is)\s+there\b/i.test(lower)
+  );
+}
+
+function scoreAllCategoriesInText(text: string): Map<MenuCategory, number> {
+  const scores = new Map<MenuCategory, number>();
 
   for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
-    const score = scoreCategoryInText(inquiryText, alias, category);
+    const score = scoreCategoryInText(text, alias, category);
     if (score > 0) {
-      const existing = scores.find((s) => s.category === category);
-      if (existing) {
-        existing.score = Math.max(existing.score, score);
-      } else {
-        scores.push({ category, score });
-      }
+      scores.set(category, Math.max(scores.get(category) ?? 0, score));
     }
   }
 
-  if (scores.length) {
-    scores.sort((a, b) => b.score - a.score);
-    return scores[0].category;
+  return scores;
+}
+
+function detectSingleCategoryFromClause(clause: string): MenuCategory | null {
+  const scores = scoreAllCategoriesInText(clause);
+  if (scores.size) {
+    return [...scores.entries()].sort((a, b) => b[1] - a[1])[0][0];
   }
 
-  return detectCategoryFromMenuItemMention(normalizeText(inquiryText));
+  const lower = normalizeText(clause);
+  const fromItem = detectCategoryFromMenuItemMention(lower);
+  if (fromItem) return fromItem;
+
+  return detectCategoryFromKeywordMention(lower);
+}
+
+function categoriesFromAliasMentions(lower: string): MenuCategory[] {
+  const found = new Set<MenuCategory>();
+  for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
+    if (alias.length < 3) continue;
+    if (new RegExp(`\\b${escapeRegex(alias)}\\b`, "i").test(lower)) {
+      found.add(category);
+    }
+  }
+  return MENU_CATEGORIES.filter((c) => found.has(c));
+}
+
+/** All menu categories the user is asking about (e.g. "starters and bowls"). */
+export function detectMenuCategories(message: string): MenuCategory[] {
+  const normalized = normalizeCompoundMessage(message);
+  const inquiryText = extractMenuInquiryText(normalized);
+  const lower = normalizeText(inquiryText);
+  const merged = new Map<MenuCategory, number>();
+
+  const hasMultiJoin = /\s+(and|or|&|,|plus)\s+/i.test(inquiryText);
+  if (hasMultiJoin) {
+    const parts = inquiryText
+      .split(/\s+and\s+|\s+or\s+|\s*,\s*|\s+&\s+|\s+plus\s+/i)
+      .map((p) => p.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const cat = detectSingleCategoryFromClause(part);
+      if (cat) merged.set(cat, (merged.get(cat) ?? 0) + 120);
+    }
+  }
+
+  if (isCategoryBrowseQuestion(lower)) {
+    for (const cat of categoriesFromAliasMentions(lower)) {
+      merged.set(cat, (merged.get(cat) ?? 0) + 85);
+    }
+  }
+
+  for (const [category, score] of scoreAllCategoriesInText(inquiryText)) {
+    merged.set(category, Math.max(merged.get(category) ?? 0, score));
+  }
+
+  const MIN = 40;
+  const ranked = [...merged.entries()]
+    .filter(([, score]) => score >= MIN)
+    .sort((a, b) => b[1] - a[1]);
+
+  if (ranked.length > 1) {
+    return ranked.map(([category]) => category);
+  }
+  if (ranked.length === 1) {
+    return [ranked[0][0]];
+  }
+
+  const single = detectSingleCategoryFromClause(inquiryText);
+  return single ? [single] : [];
+}
+
+export function detectMenuCategory(message: string): MenuCategory | null {
+  return detectMenuCategories(message)[0] ?? null;
+}
+
+/** Fallback: "for starters", "any desserts", etc. */
+function detectCategoryFromKeywordMention(lower: string): MenuCategory | null {
+  if (!/\b(for|in|about|any|some)\b/i.test(lower) && !/\btell me\b/i.test(lower)) {
+    return null;
+  }
+
+  const scores: { category: MenuCategory; score: number }[] = [];
+  for (const [alias, category] of Object.entries(CATEGORY_ALIASES)) {
+    const pattern = new RegExp(`\\b${escapeRegex(alias)}\\b`, "i");
+    if (!pattern.test(lower)) continue;
+    const existing = scores.find((s) => s.category === category);
+    if (existing) {
+      existing.score += 1;
+    } else {
+      scores.push({ category, score: 1 });
+    }
+  }
+
+  if (!scores.length) return null;
+  scores.sort((a, b) => b.score - a.score);
+  return scores[0].category;
 }
 
 function detectCategoryFromMenuItemMention(lower: string): MenuCategory | null {
@@ -373,76 +641,283 @@ export function listCategoryItems(category: MenuCategory, intro?: string): strin
   return `${heading}\n\n${items.map(formatItemLine).join("\n")}\n\nSay "Add …" to put something in your cart.`;
 }
 
+/** Rich menu browse response with cards + tap-to-order chips. */
+export function buildCategoryMenuResponse(
+  category: MenuCategory,
+  options?: { intro?: string; isSuggestion?: boolean },
+): {
+  reply: string;
+  blocks: ChatRecommendationBlock[];
+  chips: ChatSuggestionChip[];
+} {
+  const items = MENU_ITEMS.filter((i) => i.category === category);
+  const catEmoji = CATEGORY_EMOJI[category];
+
+  if (!items.length) {
+    return {
+      reply: `We don't have items listed under ${category} right now.`,
+      blocks: [],
+      chips: defaultActionChips(),
+    };
+  }
+
+  const intro =
+    options?.intro ??
+    (options?.isSuggestion
+      ? `✨ Great taste — here are ${category} I'd recommend:`
+      : `${catEmoji} **${category}** on our menu today:`);
+
+  const picks = items.map((item) =>
+    toRecommendationPick(
+      item,
+      item.description.length > 72 ? `${item.description.slice(0, 69)}…` : item.description,
+    ),
+  );
+
+  const blocks: ChatRecommendationBlock[] = [
+    {
+      title: options?.isSuggestion ? `Chef's ${category} picks` : `All ${category}`,
+      titleEmoji: catEmoji,
+      picks,
+    },
+  ];
+
+  const itemChips = picks.map(chipFromPick);
+  const chips = mergeChips(itemChips, [
+    { label: "🍽️ Full menu", message: "Show me the menu" },
+    ...defaultActionChips().slice(0, 2),
+  ]);
+
+  return {
+    reply: `${intro}\n\nTap any dish below to add it, or use the quick suggestions.`,
+    blocks,
+    chips,
+  };
+}
+
+const CATEGORY_INTRO_LINES: Record<MenuCategory, string> = {
+  Starters: "🥗 **Starters** — perfect to begin your meal",
+  Mains: "🍔 **Mains** — hearty signatures from our kitchen",
+  Bowls: "🥙 **Bowls** — balanced, flavourful one-bowl meals",
+  Salads: "🥬 **Salads** — fresh and satisfying",
+  Sides: "🍟 **Sides** — the perfect accompaniment",
+  Drinks: "🥤 **Drinks** — to sip and refresh",
+  Desserts: "🍰 **Desserts** — sweet finishes",
+};
+
+/** Combined browse for multiple categories (starters and bowls, etc.). */
+export function buildMultiCategoryMenuResponse(
+  categories: MenuCategory[],
+  options?: { isSuggestion?: boolean },
+): {
+  reply: string;
+  blocks: ChatRecommendationBlock[];
+  chips: ChatSuggestionChip[];
+} {
+  const unique = MENU_CATEGORIES.filter((c) => categories.includes(c));
+  if (!unique.length) {
+    return { reply: "I couldn't find those categories on our menu.", blocks: [], chips: defaultActionChips() };
+  }
+
+  if (unique.length === 1) {
+    return buildCategoryMenuResponse(unique[0], { isSuggestion: options?.isSuggestion });
+  }
+
+  const blocks: ChatRecommendationBlock[] = [];
+  const chips: ChatSuggestionChip[] = [];
+
+  for (const category of unique) {
+    const section = buildCategoryMenuResponse(category, {
+      isSuggestion: options?.isSuggestion,
+      intro: CATEGORY_INTRO_LINES[category],
+    });
+    blocks.push(...section.blocks);
+    chips.push(...section.chips);
+  }
+
+  const names = unique.map((c) => `**${c}**`).join(" and ");
+  const reply =
+    unique.length === 2
+      ? `Here are your options in ${names}:\n\nTap any dish below to add it, or use the quick suggestions.`
+      : `Here are your options across ${names}:\n\nTap any dish below to add it, or use the quick suggestions.`;
+
+  return {
+    reply,
+    blocks,
+    chips: mergeChips(chips, defaultActionChips().slice(0, 2)),
+  };
+}
+
 export function buildComboSuggestions(
   anchorItemIds: string[],
   cartItemIds: Set<string>,
   max = 5,
 ): string | null {
+  const unique = collectComboSuggestions(anchorItemIds, cartItemIds, max);
+  if (!unique.length) return null;
+
   const anchors = anchorItemIds
     .map((id) => getMenuItemById(id))
     .filter((x): x is MenuItem => Boolean(x));
-
-  if (!anchors.length) return null;
-
-  const suggestions: { item: MenuItem; reason: string }[] = [];
-  const seen = new Set<string>([...cartItemIds, ...anchorItemIds]);
   const primaryAnchor = anchors[anchors.length - 1];
-
-  const rule = ITEM_PAIRINGS[primaryAnchor.id];
-  if (rule) {
-    for (const id of rule.ids) {
-      if (suggestions.length >= max) break;
-      if (seen.has(id)) continue;
-      const item = getMenuItemById(id);
-      if (item) {
-        suggestions.push({ item, reason: rule.note });
-        seen.add(id);
-      }
-    }
-  }
-
-  const plan = CATEGORY_PAIRING_PLAN[primaryAnchor.category as MenuCategory];
-  if (plan) {
-    for (const id of plan.pickIds) {
-      if (suggestions.length >= max) break;
-      if (seen.has(id)) continue;
-      const item = getMenuItemById(id);
-      if (item) {
-        suggestions.push({
-          item,
-          reason: `Goes well with ${primaryAnchor.name}`,
-        });
-        seen.add(id);
-      }
-    }
-  }
-
-  if (suggestions.length < 2) {
-    const anchorCats = new Set(anchors.map((a) => a.category as MenuCategory));
-    for (const cat of anchorCats) {
-      const plan = CATEGORY_PAIRING_PLAN[cat];
-      if (!plan) continue;
-      for (const nextCat of plan.nextCategories) {
-        const items = pickItemsForCategory(nextCat, seen, 2, plan.pickIds);
-        for (const item of items) {
-          if (suggestions.length >= max) break;
-          suggestions.push({ item, reason: `Complements your ${cat.toLowerCase()}` });
-          seen.add(item.id);
-        }
-      }
-    }
-  }
-
-  if (suggestions.length < 1) return null;
-
-  const unique = suggestions.slice(0, max);
-  const anchorLabel =
-    anchors.length > 1 ? "your order" : primaryAnchor.name;
+  const anchorLabel = anchors.length > 1 ? "your order" : primaryAnchor?.name ?? "your order";
 
   return (
     `\n\nWhat would you like with ${anchorLabel}? These pair nicely:\n` +
     unique.map((s) => formatPick(s.item, s.reason)).join("\n")
   );
+}
+
+export function buildMealGapBlocks(
+  request: ChatRequest,
+  maxPerCategory = 2,
+): ChatRecommendationBlock[] {
+  const cartCats = getCartCategories(request);
+  const cartIds = getCartItemIds(request);
+  if (!cartCats.size) return [];
+
+  const missing = analyzeMealGaps(cartCats);
+  if (!missing.length) return [];
+
+  const blocks: ChatRecommendationBlock[] = [];
+
+  for (const category of missing.slice(0, 3)) {
+    const plan = CATEGORY_PAIRING_PLAN[category];
+    const picks = pickItemsForCategory(category, cartIds, maxPerCategory, plan?.pickIds ?? []);
+    if (!picks.length) continue;
+
+    const label =
+      category === "Drinks"
+        ? "Quench your thirst"
+        : category === "Sides"
+          ? "Complete with a side"
+          : category === "Desserts"
+            ? "Sweet finish"
+            : category === "Starters"
+              ? "Start strong"
+              : `More from ${category}`;
+
+    blocks.push({
+      title: label,
+      titleEmoji: CATEGORY_EMOJI[category],
+      picks: picks.map((item) =>
+        toRecommendationPick(
+          item,
+          category === "Drinks"
+            ? "Perfect with your meal"
+            : `Round out your ${[...cartCats][0]?.toLowerCase() ?? "order"}`,
+        ),
+      ),
+    });
+  }
+
+  return blocks;
+}
+
+export interface StructuredPostAddAdvice {
+  headline: string;
+  blocks: ChatRecommendationBlock[];
+  chips: ChatSuggestionChip[];
+}
+
+export function postAddAdviceStructured(
+  request: ChatRequest,
+  addedItemIds: string[],
+): StructuredPostAddAdvice {
+  const cartIds = getCartItemIds(request);
+  const combined = new Set([...cartIds, ...addedItemIds]);
+
+  const comboRows = collectComboSuggestions(addedItemIds, combined, 5);
+  const primary = getMenuItemById(addedItemIds[addedItemIds.length - 1] ?? "");
+
+  const blocks: ChatRecommendationBlock[] = [];
+
+  if (comboRows.length) {
+    blocks.push({
+      title: primary
+        ? `Hand-picked for your ${primary.name}`
+        : "Goes great with what you ordered",
+      titleEmoji: "✨",
+      picks: comboRows.map((s) => toRecommendationPick(s.item, s.reason)),
+    });
+  }
+
+  const virtualRequest: ChatRequest = {
+    ...request,
+    cart: {
+      lines: [
+        ...(request.cart?.lines ?? []),
+        ...addedItemIds
+          .filter((id) => !cartIds.has(id))
+          .map((id) => {
+            const item = getMenuItemById(id);
+            return item
+              ? {
+                  lineId: `virt-${id}`,
+                  itemId: id,
+                  name: item.name,
+                  quantity: 1,
+                  unitPrice: item.price,
+                  modifiers: {},
+                }
+              : null;
+          })
+          .filter((x): x is NonNullable<typeof x> => Boolean(x)),
+      ],
+      subtotal: request.cart?.subtotal ?? 0,
+    },
+  };
+
+  const gapBlocks = buildMealGapBlocks(virtualRequest, 2);
+  for (const block of gapBlocks) {
+    blocks.push(block);
+  }
+
+  const seenChips = new Set<string>();
+  const chips: ChatSuggestionChip[] = [];
+
+  for (const block of blocks) {
+    for (const pick of block.picks) {
+      if (seenChips.has(pick.itemId)) continue;
+      seenChips.add(pick.itemId);
+      chips.push(chipFromPick(pick));
+    }
+  }
+
+  const headline =
+    blocks.length > 0
+      ? primary
+        ? `🎉 Nice choice! A few ideas to go with your ${primary.name}:`
+        : "🎉 Here are a few ideas picked just for you:"
+      : "";
+
+  return { headline, blocks, chips: chips.slice(0, 8) };
+}
+
+export function defaultActionChips(): ChatSuggestionChip[] {
+  return [
+    { label: "🛒 Place order", message: "Place order" },
+    { label: "📋 View cart", message: "What's in my cart?" },
+    { label: "🍟 Add truffle fries", message: "Add truffle parmesan fries" },
+    { label: "🥤 Add a drink", message: "Add craft lavender lemonade" },
+  ];
+}
+
+export function mergeChips(
+  personalized: ChatSuggestionChip[],
+  extras: ChatSuggestionChip[] = defaultActionChips(),
+  max = 10,
+): ChatSuggestionChip[] {
+  const seen = new Set<string>();
+  const out: ChatSuggestionChip[] = [];
+  for (const chip of [...personalized, ...extras]) {
+    const key = chip.message.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(chip);
+    if (out.length >= max) break;
+  }
+  return out;
 }
 
 export function buildMealGapAdvice(request: ChatRequest, maxPerCategory = 2): string | null {
@@ -574,9 +1049,12 @@ export function pairingAdviceReply(request: ChatRequest): string | null {
 }
 
 export function postAddAdvice(request: ChatRequest, addedItemIds: string[]): string {
+  const structured = postAddAdviceStructured(request, addedItemIds);
+  if (structured.blocks.length) {
+    return structured.headline;
+  }
   const cartIds = getCartItemIds(request);
   const combined = new Set([...cartIds, ...addedItemIds]);
-
   const combo = buildComboSuggestions(addedItemIds, combined);
   const virtualRequest: ChatRequest = {
     ...request,
@@ -603,7 +1081,6 @@ export function postAddAdvice(request: ChatRequest, addedItemIds: string[]): str
       subtotal: request.cart?.subtotal ?? 0,
     },
   };
-
   const gap = buildMealGapAdvice(virtualRequest);
   return (combo ?? "") + (gap ?? "");
 }

@@ -48,14 +48,10 @@ import type { ChatMessage, ChatSessionContext } from "@/src/types";
 
 
 
-const STARTER_SUGGESTIONS = [
-
-  "What are your starters?",
-
-  "Add spicy chicken sandwich",
-
-  "Show my orders",
-
+const STARTER_CHIPS = [
+  { label: "🥗 What are your starters?", message: "What are your starters?" },
+  { label: "🌶️ Spicy chicken sandwich", message: "Add spicy chicken sandwich" },
+  { label: "📋 Show my orders", message: "Show my orders" },
 ];
 
 
@@ -72,7 +68,7 @@ export default function AssistantScreen() {
 
   const [input, setInput] = useState("");
 
-  const [suggestions, setSuggestions] = useState<string[]>(STARTER_SUGGESTIONS);
+  const [composerChips, setComposerChips] = useState(STARTER_CHIPS);
 
   const [sending, setSending] = useState(false);
 
@@ -140,7 +136,13 @@ export default function AssistantScreen() {
 
         ]);
 
-        setSuggestions(response.suggestions ?? STARTER_SUGGESTIONS);
+        setComposerChips(
+          response.suggestionChips ??
+            (response.suggestions ?? STARTER_CHIPS.map((c) => c.message)).map((s) => ({
+              label: s,
+              message: s,
+            })),
+        );
 
         if (response.sessionContext) {
 
@@ -222,7 +224,7 @@ export default function AssistantScreen() {
 
       setSending(true);
 
-      setSuggestions([]);
+      setComposerChips([]);
 
 
 
@@ -295,22 +297,23 @@ export default function AssistantScreen() {
 
 
         const assistantMsg: ChatMessage = {
-
           id: `a-${Date.now()}`,
-
           role: "assistant",
-
           content: response.reply,
-
           timestamp: Date.now(),
-
+          suggestionChips: response.suggestionChips,
+          recommendationBlocks: response.recommendationBlocks,
         };
-
-
 
         setMessages((prev) => [...prev, assistantMsg]);
 
-        setSuggestions(response.suggestions ?? STARTER_SUGGESTIONS);
+        const nextChips =
+          response.suggestionChips ??
+          (response.suggestions ?? STARTER_CHIPS.map((c) => c.message)).map((s) => ({
+            label: s,
+            message: s,
+          }));
+        setComposerChips(nextChips.length ? nextChips : STARTER_CHIPS);
 
       } catch {
 
@@ -334,7 +337,7 @@ export default function AssistantScreen() {
 
         ]);
 
-        setSuggestions(STARTER_SUGGESTIONS);
+        setComposerChips(STARTER_CHIPS);
 
       } finally {
 
@@ -381,6 +384,7 @@ export default function AssistantScreen() {
   });
 
   const voiceActive = listening || preparing;
+  const isRecordingHint = listening && partial.startsWith("Recording");
 
 
 
@@ -430,7 +434,11 @@ export default function AssistantScreen() {
 
           {messages.map((m) => (
 
-            <ChatBubble key={m.id} message={m} />
+            <ChatBubble
+              key={m.id}
+              message={m}
+              onSuggestionSelect={m.role === "assistant" ? (text) => sendMessage(text) : undefined}
+            />
 
           ))}
 
@@ -446,7 +454,13 @@ export default function AssistantScreen() {
                 }}
               />
               <Text style={{ color: "#c9a962", fontSize: 13 }}>
-                {preparing ? "Starting microphone…" : "Listening… speak now"}
+                {preparing && !listening
+                  ? "Transcribing…"
+                  : isRecordingHint
+                    ? "Recording… tap stop when done"
+                    : preparing
+                      ? "Starting microphone…"
+                      : "Listening… speak now"}
               </Text>
             </View>
           ) : null}
@@ -487,7 +501,7 @@ export default function AssistantScreen() {
 
         >
 
-          <SuggestionChips suggestions={suggestions} onSelect={(s) => sendMessage(s)} />
+          <SuggestionChips chips={composerChips} onSelect={(s) => sendMessage(s)} />
 
 
 
@@ -527,15 +541,19 @@ export default function AssistantScreen() {
 
               placeholder={
 
-                preparing
+                preparing && !listening
 
-                  ? "Opening microphone…"
+                  ? "Transcribing your speech…"
 
-                  : listening
+                  : preparing
 
-                    ? "Speak now — words appear here…"
+                    ? "Opening microphone…"
 
-                    : "Add two spicy chicken sandwiches…"
+                    : listening
+
+                      ? partial || "Recording… tap stop when finished"
+
+                      : "Add two spicy chicken sandwiches…"
 
               }
 

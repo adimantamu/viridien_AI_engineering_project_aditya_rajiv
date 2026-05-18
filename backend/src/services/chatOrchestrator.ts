@@ -1,6 +1,6 @@
 import { MENU_ITEMS, getMenuItemById } from "../data/menu.js";
 import type { CartAction, ChatRequest, ChatResponse, ChatSessionContext } from "../types/index.js";
-import { menuInquiryReply } from "./menuInquiry.js";
+import { buildMenuInquiryResponse, menuInquiryReply } from "./menuInquiry.js";
 import {
   buildOrderReply,
   orderDetailReply,
@@ -10,11 +10,24 @@ import {
 import {
   extractAddText,
   messageHasAddIntent,
+  messageHasCartMutation,
   messageHasMenuInquiry,
   normalizeCompoundMessage,
 } from "./messageNormalizer.js";
-import { buildMealGapAdvice, postAddAdvice, detectMenuCategory, listCategoryItems } from "./mealSuggestions.js";
-import { dedupeCartActions, parseAddActionsFromMessage } from "./orderSegmentParser.js";
+import {
+  buildMealGapAdvice,
+  defaultActionChips,
+  detectMenuCategories,
+  buildMultiCategoryMenuResponse,
+  listCategoryItems,
+  mergeChips,
+  postAddAdviceStructured,
+} from "./mealSuggestions.js";
+import {
+  dedupeCartActions,
+  parseAddActionsFromMessage,
+  parseUpdateQuantityFromMessage,
+} from "./orderSegmentParser.js";
 
 export const HIGH_QUANTITY_THRESHOLD = 10;
 const TAX_RATE = 0.08;
@@ -85,6 +98,20 @@ function describeActions(actions: CartAction[]): string {
     .join(", ");
 }
 
+function describeCartChangeSummary(actions: CartAction[]): string {
+  const parts: string[] = [];
+  for (const a of actions) {
+    const item = a.itemId ? getMenuItemById(a.itemId) : undefined;
+    const name = item?.name ?? "item";
+    const qty = a.quantity ?? 1;
+    if (a.type === "ADD") parts.push(`added ${qty}× ${name}`);
+    else if (a.type === "REMOVE") parts.push(`removed ${qty}× ${name}`);
+    else if (a.type === "UPDATE_QUANTITY") parts.push(`set ${name} to ${qty}`);
+    else if (a.type === "CLEAR") parts.push("cleared your cart");
+  }
+  return parts.join(", ");
+}
+
 function handleConfirmation(
   request: ChatRequest,
   session: ChatSessionContext | undefined,
@@ -145,13 +172,18 @@ function handleConfirmation(
     const pendingIds = session.pendingActions
       .filter((a) => a.type === "ADD" && a.itemId)
       .map((a) => a.itemId!);
-    const advice = postAddAdvice(request, pendingIds);
+    const advice = postAddAdviceStructured(request, pendingIds);
+    const chips = mergeChips(advice.chips);
+    let reply = `✅ Done — I've added ${added} to your cart.`;
+    if (advice.headline) reply += `\n\n${advice.headline}`;
     return {
-      reply: `Done — I've added ${added} to your cart.${advice}`,
+      reply,
       actions: session.pendingActions,
       orderActions: [],
       sessionContext: { awaitingConfirmation: null, pendingActions: [] },
-      suggestions: ["View cart", "Place order", "What else should I add?"],
+      suggestions: chips.map((c) => c.message),
+      suggestionChips: chips,
+      recommendationBlocks: advice.blocks,
       parsedBy: "rules",
     };
   }
@@ -168,13 +200,12 @@ function handleCompoundMessage(request: ChatRequest): ChatResponse | null {
     return null;
   }
 
-  const category = detectMenuCategory(message);
+  const categories = detectMenuCategories(message);
   let menuPart = "";
-  if (category) {
-    menuPart = listCategoryItems(
-      category,
-      `Here are our ${category}:`,
-    );
+  if (categories.length > 1) {
+    menuPart = buildMultiCategoryMenuResponse(categories).reply;
+  } else if (categories.length === 1) {
+    menuPart = listCategoryItems(categories[0], `Here are our ${categories[0]}:`);
   } else {
     const menuOnly = menuInquiryReply({ ...request, message });
     if (!menuOnly) return null;
@@ -208,7 +239,10 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
     messageHasMenuInquiry(normalized) && extractAddText(normalized)
       ? extractAddText(normalized)
       : normalized;
-  const raw = [...parseAddActionsFromMessage(addText)];
+  const raw = [
+    ...parseAddActionsFromMessage(addText),
+    ...parseUpdateQuantityFromMessage(addText),
+  ];
   if (!raw.length) return null;
 
   const actions = dedupeCartActions(raw);
@@ -217,15 +251,20 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
   const addedIds = immediate.filter((a) => a.type === "ADD").map((a) => a.itemId!);
   let reply = "";
 
+  let recommendationBlocks;
+  let suggestionChips;
+
   if (immediate.length) {
-    const parts = immediate
-      .filter((a) => a.type === "ADD")
-      .map((a) => {
-        const item = getMenuItemById(a.itemId!);
-        return `${a.quantity}× ${item?.name ?? "item"}`;
-      });
-    reply = `I've added ${parts.join(", ")}.`;
-    reply += postAddAdvice(request, addedIds);
+    const summary = describeCartChangeSummary(immediate);
+    const advice = addedIds.length ? postAddAdviceStructured(request, addedIds) : null;
+    if (advice) {
+      recommendationBlocks = advice.blocks;
+      suggestionChips = mergeChips(advice.chips);
+    }
+    reply = `✅ Done — ${summary}.`;
+    if (advice?.headline) {
+      reply += `\n\n${advice.headline}`;
+    }
   }
 
   if (pending.length) {
@@ -240,18 +279,28 @@ function handleCartAdd(request: ChatRequest): ChatResponse | null {
       orderActions: [],
       sessionContext: { awaitingConfirmation: "bulk_add", pendingActions: pending },
       suggestions: ["Yes", "No", "View cart"],
+      suggestionChips: [
+        { label: "✅ Yes", message: "yes" },
+        { label: "❌ No", message: "no" },
+        { label: "📋 View cart", message: "What's in my cart?" },
+      ],
+      recommendationBlocks,
       parsedBy: "rules",
     };
   }
 
   if (!immediate.length) return null;
 
+  const chips = suggestionChips ?? mergeChips([], defaultActionChips());
+
   return {
     reply,
     actions: immediate,
     orderActions: [],
     sessionContext: { awaitingConfirmation: null, pendingActions: [] },
-    suggestions: ["Place order", "View cart", "Add truffle fries"],
+    suggestions: chips.map((c) => c.message),
+    suggestionChips: chips,
+    recommendationBlocks,
     parsedBy: "rules",
   };
 }
@@ -261,7 +310,8 @@ export function handleStructuredChat(
   request: ChatRequest,
   session?: ChatSessionContext,
 ): ChatResponse | null {
-  const confirmation = handleConfirmation(request, session);
+  const activeSession = session ?? request.session;
+  const confirmation = handleConfirmation(request, activeSession);
   if (confirmation) return confirmation;
 
   const orderActions = parseOrderActions(request);
@@ -329,27 +379,59 @@ export function handleStructuredChat(
   const compound = handleCompoundMessage(request);
   if (compound) return compound;
 
-  if (messageHasAddIntent(request.message)) {
+  const menuResponse = buildMenuInquiryResponse(request);
+  if (menuResponse) return menuResponse;
+
+  if (messageHasCartMutation(request.message)) {
     const cartFirst = handleCartAdd(request);
     if (cartFirst) return cartFirst;
-  }
-
-  const menuReply = menuInquiryReply(request);
-  if (menuReply) {
-    return {
-      reply: menuReply,
-      actions: [],
-      orderActions: [],
-      sessionContext: { awaitingConfirmation: null },
-      suggestions: ["Add spicy chicken sandwich", "What are your desserts?", "Place order"],
-      parsedBy: "rules",
-    };
   }
 
   const cartAdd = handleCartAdd(request);
   if (cartAdd) return cartAdd;
 
+  const cartView = handleCartView(request);
+  if (cartView) return cartView;
+
   return null;
+}
+
+function handleCartView(request: ChatRequest): ChatResponse | null {
+  const message = request.message.trim();
+  if (
+    !/(what('s| is) in my cart|show (my )?cart|view cart|list.*cart|my cart\b)/i.test(message)
+  ) {
+    return null;
+  }
+
+  const lines = request.cart?.lines ?? [];
+  if (!lines.length) {
+    return {
+      reply: "Your cart is empty. Browse the menu or tell me what you'd like to order.",
+      actions: [],
+      orderActions: [],
+      sessionContext: { awaitingConfirmation: null },
+      suggestions: ["What are your starters?", "Add truffle fries", "Show my orders"],
+      parsedBy: "rules",
+    };
+  }
+
+  const detail = lines
+    .map((line, index) => {
+      const lineTotal = line.unitPrice * line.quantity;
+      return `${index + 1}. ${line.quantity}× ${line.name} — $${lineTotal.toFixed(2)}`;
+    })
+    .join("\n");
+  const subtotal = request.cart?.subtotal ?? 0;
+
+  return {
+    reply: `Your cart (${lines.length} line${lines.length === 1 ? "" : "s"}, $${subtotal.toFixed(2)} subtotal):\n\n${detail}`,
+    actions: [],
+    orderActions: [],
+    sessionContext: { awaitingConfirmation: null },
+    suggestions: ["Place order", "Show my orders", "Clear cart"],
+    parsedBy: "rules",
+  };
 }
 
 export function getGreetingReply(): ChatResponse {

@@ -40,6 +40,13 @@ const NUMBER_WORD_PATTERN = Object.keys(NUMBER_WORDS)
   .map((w) => w.replace(/\s+/g, "\\s+"))
   .join("|");
 
+/** Filler between chained cart commands — stripped before qty/item parsing. */
+const SEGMENT_LEAD_FILLER =
+  /^(?:(?:and\s+)?then(?:\s+|$)|next(?:\s+|$)|after\s+that(?:\s+|$)|(?:you\s+)?can\s+|please\s+|could\s+you\s+|would\s+you\s+|i\s+(?:want|need|'d\s+like)\s+(?:to\s+)?|just\s+|also\s+|finally\s+)*/i;
+
+const CART_VERB_PREFIX =
+  /^(?:REMOVE\s+|(?:remove|delete|take\s+off)\s+|(?:add|include|get|order|put)\s+)/i;
+
 export function normalizeText(text: string): string {
   return text.toLowerCase().replace(/[^\w\s-]/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -48,7 +55,7 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** Fix voice glitches: "add.4" → "add 4", missing spaces after punctuation. */
+/** Fix voice glitches and normalize chained order phrasing. */
 export function normalizeOrderMessage(message: string): string {
   return message
     .replace(/([.!?])(?=\S)/g, "$1 ")
@@ -56,6 +63,11 @@ export function normalizeOrderMessage(message: string): string {
     .replace(/\band\.(\d+)/gi, "and $1")
     .replace(/\s+also\s+include\s+/gi, " and ")
     .replace(/\s+include\s+/gi, " add ")
+    .replace(/\band\s+also\s+(remove|delete|take\s+off)\b/gi, " and REMOVE $1 ")
+    .replace(/\balso\s+(remove|delete|take\s+off)\b/gi, "REMOVE $1 ")
+    .replace(/\band\s+then\b/gi, " and ")
+    .replace(/\bafter\s+that\b/gi, " and ")
+    .replace(/\bthen\s+(?:(?:you|please|can\s+you)\s+)*(?=(?:add|remove|delete|take\s+off)\b)/gi, "")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -79,7 +91,42 @@ const SEGMENT_STOPWORDS = new Set([
   "please",
   "cart",
   "be",
+  "then",
+  "next",
 ]);
+
+function stripSegmentLeadFiller(segment: string): string {
+  let text = segment.trim();
+  for (let i = 0; i < 6; i++) {
+    const next = text.replace(SEGMENT_LEAD_FILLER, "").trim();
+    if (next === text) break;
+    text = next;
+  }
+  return text;
+}
+
+function segmentIntent(segment: string): { isRemove: boolean; body: string } {
+  let s = segment.trim();
+  const isRemove =
+    /^REMOVE\s+/i.test(s) ||
+    /^(?:remove|deleted?|take\s+off)\s+/i.test(s);
+
+  s = s
+    .replace(/^REMOVE\s+/i, "")
+    .replace(/^(?:remove|delete|take\s+off)\s+/i, "")
+    .trim();
+
+  s = stripSegmentLeadFiller(s);
+
+  if (!isRemove) {
+    s = s
+      .replace(/^(?:add|include|get|order|put)\s+/i, "")
+      .trim();
+    s = stripSegmentLeadFiller(s);
+  }
+
+  return { isRemove, body: s };
+}
 
 export function splitOrderSegments(message: string): string[] {
   const cleaned = message
@@ -100,7 +147,10 @@ export function splitOrderSegments(message: string): string[] {
     .replace(/\balong\s+with\b/gi, " and ")
     .replace(/\b(?:to be )?added to (?:the )?cart\b/gi, "")
     .replace(/\bthat\s+also\s+add\s+/gi, "")
-    .replace(/\balso\s+add\s+/gi, "");
+    .replace(/\balso\s+add\s+/gi, " add ")
+    .replace(/\s+and\s+(remove|delete|take off)\s+/gi, " and REMOVE ")
+    .replace(/,\s*(remove|delete|take off)\s+/gi, ", REMOVE ")
+    .replace(/\s+then\s+(?=REMOVE|remove|delete|take off|add|include|get|order)/gi, " and ");
 
   return normalized
     .split(/\s+and\s+|\s*,\s*|\s+plus\s+|\.\s+/i)
@@ -110,7 +160,11 @@ export function splitOrderSegments(message: string): string[] {
         .replace(/^(some|a bit of)\s+/i, "")
         .trim(),
     )
-    .filter((s) => s.length > 0 && !SEGMENT_STOPWORDS.has(normalizeText(s)));
+    .filter((s) => {
+      if (!s.length) return false;
+      const bare = normalizeText(s.replace(CART_VERB_PREFIX, ""));
+      return bare.length > 0 && !SEGMENT_STOPWORDS.has(bare);
+    });
 }
 
 function parseNumberToken(token: string): number | null {
@@ -126,7 +180,7 @@ function parseNumberToken(token: string): number | null {
 }
 
 function tryLeadingQuantity(rest: string): { quantity: number; rest: string; found: boolean } {
-  let text = rest.replace(/^(about|around|like|maybe|approximately)\s+/i, "");
+  let text = stripSegmentLeadFiller(rest).replace(/^(about|around|like|maybe|approximately)\s+/i, "");
 
   const digitMatch = text.match(/^(\d+)\s*(?:x\s*)?/i);
   if (digitMatch) {
@@ -179,7 +233,7 @@ function tryTrailingQuantity(rest: string): { quantity: number; rest: string; fo
 
 /** Quantity before or after the item name — "3 burgers", "burgers 3", "seven sandwiches". */
 export function extractQuantity(segment: string): { quantity: number; rest: string } {
-  const normalized = normalizeOrderMessage(segment);
+  const normalized = stripSegmentLeadFiller(normalizeOrderMessage(segment));
 
   const leading = tryLeadingQuantity(normalized);
   if (leading.found) {
@@ -208,12 +262,14 @@ function singularizePhrase(phrase: string): string {
 }
 
 export function matchMenuItem(segment: string) {
-  const stripped = segment
-    .replace(/\s+of\s+quantity\s+\d+\s*$/i, "")
-    .replace(/\s+\d+\s+in\s+quantity\s*$/i, "")
-    .replace(/\s+in\s+quantity\s*$/i, "")
-    .replace(/\s+of\s*$/i, "")
-    .trim();
+  const stripped = stripSegmentLeadFiller(
+    segment
+      .replace(/\s+of\s+quantity\s+\d+\s*$/i, "")
+      .replace(/\s+\d+\s+in\s+quantity\s*$/i, "")
+      .replace(/\s+in\s+quantity\s*$/i, "")
+      .replace(/\s+of\s*$/i, "")
+      .trim(),
+  );
 
   const variants = [
     normalizeText(stripped),
@@ -248,6 +304,15 @@ export function matchMenuItem(segment: string) {
         if (normalized.length >= 5 && candidate.length >= 5 && candidate.includes(normalized)) {
           const score = 300 + normalized.length;
           if (!best || score > best.score) best = { item, score };
+          continue;
+        }
+
+        if (normalized.length >= 4 && candidate.length >= normalized.length + 2) {
+          const tokenInCandidate = new RegExp(`\\b${escapeRegex(normalized)}\\b`, "i");
+          if (tokenInCandidate.test(candidate)) {
+            const score = 250 + normalized.length;
+            if (!best || score > best.score) best = { item, score };
+          }
         }
       }
     }
@@ -292,6 +357,18 @@ export function extractModifiers(
   return mods;
 }
 
+export function parseUpdateQuantityFromMessage(message: string): CartAction[] {
+  const match = message.match(
+    /(?:change|update|set)\s+(.+?)\s+to\s+(\d+)|make\s+it\s+(\d+)\s+(.+)/i,
+  );
+  if (!match) return [];
+  const qty = parseInt(match[2] ?? match[3], 10);
+  const itemPhrase = match[1] ?? match[4];
+  const item = matchMenuItem(itemPhrase);
+  if (!item || !qty) return [];
+  return [{ type: "UPDATE_QUANTITY", itemId: item.id, quantity: qty }];
+}
+
 export function parseAddActionsFromMessage(message: string): CartAction[] {
   const actions: CartAction[] = [];
   const prepared = normalizeOrderMessage(message);
@@ -307,12 +384,8 @@ export function parseAddActionsFromMessage(message: string): CartAction[] {
       actions.push({ type: "CLEAR" });
       continue;
     }
-    if (/^REMOVE /i.test(segment)) continue;
 
-    const isRemove = /^remove\s+/i.test(segment);
-    const body = segment
-      .replace(/^REMOVE\s+/i, "")
-      .replace(/^(?:add|include|get|order)\s+/i, "");
+    const { isRemove, body } = segmentIntent(segment);
     const { quantity, rest } = extractQuantity(body);
     const item = matchMenuItem(rest);
     if (!item || SEGMENT_STOPWORDS.has(normalizeText(rest))) continue;
@@ -330,27 +403,33 @@ export function parseAddActionsFromMessage(message: string): CartAction[] {
   return actions;
 }
 
-/** Same item mentioned twice in one message → keep the last quantity. */
+function actionKey(action: CartAction): string {
+  return `${action.type}:${action.itemId ?? ""}:${JSON.stringify(action.modifiers ?? {})}`;
+}
+
+/** Merge duplicate item lines in one message — sum ADD/REMOVE quantities per item. */
 export function dedupeCartActions(actions: CartAction[]): CartAction[] {
   const result: CartAction[] = [];
+  const indexByKey = new Map<string, number>();
 
   for (const action of actions) {
     if (action.type === "CLEAR") {
       return [{ type: "CLEAR" }];
     }
 
-    const existing = result.find(
-      (a) =>
-        a.type === action.type &&
-        a.itemId === action.itemId &&
-        JSON.stringify(a.modifiers) === JSON.stringify(action.modifiers),
-    );
+    const key = actionKey(action);
+    const existingIdx = indexByKey.get(key);
 
-    if (existing && action.type === "ADD") {
-      existing.quantity = action.quantity ?? 1;
-    } else {
-      result.push({ ...action });
+    if (existingIdx !== undefined) {
+      const existing = result[existingIdx];
+      if (action.type === "ADD" || action.type === "REMOVE") {
+        existing.quantity = (existing.quantity ?? 1) + (action.quantity ?? 1);
+      }
+      continue;
     }
+
+    indexByKey.set(key, result.length);
+    result.push({ ...action });
   }
 
   return result;

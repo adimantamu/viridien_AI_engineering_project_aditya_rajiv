@@ -68,11 +68,33 @@ export interface Order {
   cancelledAt?: number;
 }
 
+export interface ChatSuggestionChip {
+  label: string;
+  message: string;
+}
+
+export interface ChatRecommendationPick {
+  itemId: string;
+  name: string;
+  price: number;
+  emoji: string;
+  note: string;
+  addMessage: string;
+}
+
+export interface ChatRecommendationBlock {
+  title: string;
+  titleEmoji: string;
+  picks: ChatRecommendationPick[];
+}
+
 export interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
   timestamp: number;
+  suggestionChips?: ChatSuggestionChip[];
+  recommendationBlocks?: ChatRecommendationBlock[];
 }
 
 export interface ClientOrderLineSnapshot {
@@ -105,7 +127,9 @@ export interface ChatResponse {
   actions: CartAction[];
   orderActions?: OrderAction[];
   suggestions?: string[];
-  parsedBy: "openai" | "rules";
+  suggestionChips?: ChatSuggestionChip[];
+  recommendationBlocks?: ChatRecommendationBlock[];
+  parsedBy: "openai" | "rules" | "rules-multi" | "openai+rules";
   placeOrderFromCart?: boolean;
   sessionContext?: ChatSessionContext;
 }
