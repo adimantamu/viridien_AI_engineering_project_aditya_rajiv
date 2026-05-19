@@ -2,6 +2,11 @@
 
 A full-stack mobile ordering experience built for the **Viridien AI Full-Stack Engineering Internship** challenge. Guests browse a curated restaurant menu and manage a live shopping cart through both traditional UI controls and a conversational **AI maître d'** that converts natural language into structured cart operations.
 
+### Project links
+
+- **Project design overview (video):** https://drive.google.com/file/d/1EBBY-bvrmyptlJ_AeMu5Q3dqriygNc_C/view
+- **Mobile experience walkthrough (Loom):** https://www.loom.com/share/2b15ba7550ca4d30a38e7081d40c0484
+
 The repository is a **monorepo** with two parts:
 
 | Package | Role | Technology |
