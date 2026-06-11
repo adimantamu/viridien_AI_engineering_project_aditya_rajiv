@@ -2,31 +2,24 @@ import { Ionicons } from "@expo/vector-icons";
 
 import { hapticImpact, hapticNotification, Haptics } from "@/src/lib/haptics";
 
+import { useOrderSpeech } from "@/src/hooks/useOrderSpeech";
 import { useVoiceInput } from "@/src/hooks/useVoiceInput";
+import { getOrderSpeechStatusLine } from "@/src/lib/orderSpeechUi";
+import { buildAssistantSpeechText, sanitizeChatForSpeech } from "@/src/lib/speechText";
 import { getVoicePlaceholder, getVoiceStatusLine, showVoiceError } from "@/src/lib/voiceUi";
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
-
   ActivityIndicator,
-
-  Alert,
-
+  AppState,
   KeyboardAvoidingView,
-
   Platform,
-
   Pressable,
-
   ScrollView,
-
   Text,
-
   TextInput,
-
   View,
-
 } from "react-native";
 
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -37,7 +30,8 @@ import { Header } from "@/components/Header";
 
 import { SuggestionChips } from "@/components/SuggestionChips";
 
-import { sendChatMessage } from "@/src/lib/api";
+import { getApiUrl, sendChatMessage } from "@/src/lib/api";
+import { fetchApiHealth } from "@/src/lib/transcribeAudio";
 
 import { useCartStore } from "@/src/store/cartStore";
 
@@ -75,7 +69,9 @@ export default function AssistantScreen() {
 
   const [session, setSession] = useState<ChatSessionContext>({ awaitingConfirmation: null });
 
+  const [voiceWhisperReady, setVoiceWhisperReady] = useState<boolean | null>(null);
 
+  const stopVoiceRef = useRef<() => void>(() => {});
 
   const lines = useCartStore((s) => s.lines);
 
@@ -91,7 +87,55 @@ export default function AssistantScreen() {
 
   const placeOrderFromCart = useOrdersStore((s) => s.placeOrderFromCart);
 
+  const {
+    isPlaying,
+    isPaused,
+    hasPlayback,
+    available: speechAvailable,
+    speak,
+    pause: pauseSpeech,
+    resume: resumeSpeech,
+    stop: stopSpeech,
+  } = useOrderSpeech({
+    onBeforeSpeak: () => stopVoiceRef.current(),
+  });
 
+  const { listening, preparing, partial, available, stop: stopVoice, toggle } = useVoiceInput({
+    onTranscriptChange: setInput,
+    onFinalTranscript: setInput,
+    onError: showVoiceError,
+  });
+
+  useEffect(() => {
+    stopVoiceRef.current = stopVoice;
+  }, [stopVoice]);
+
+  useEffect(() => {
+    return () => {
+      stopSpeech();
+    };
+  }, [stopSpeech]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const refreshVoiceHealth = async () => {
+      const health = await fetchApiHealth();
+      if (!cancelled) {
+        setVoiceWhisperReady(health.ok && health.voice === "whisper");
+      }
+    };
+
+    void refreshVoiceHealth();
+    const sub = AppState.addEventListener("change", (state) => {
+      if (state === "active") void refreshVoiceHealth();
+    });
+
+    return () => {
+      cancelled = true;
+      sub.remove();
+    };
+  }, []);
 
   useEffect(() => {
 
@@ -203,7 +247,7 @@ export default function AssistantScreen() {
 
       if (!trimmed || sending) return;
 
-
+      stopSpeech();
 
       const userMsg: ChatMessage = {
 
@@ -308,6 +352,16 @@ export default function AssistantScreen() {
 
         setMessages((prev) => [...prev, assistantMsg]);
 
+        const cartState = useCartStore.getState();
+        const speechText = buildAssistantSpeechText(
+          response,
+          cartState.lines,
+          cartState.subtotal(),
+        );
+        if (speechText && speechAvailable) {
+          speak(speechText, assistantMsg.id);
+        }
+
         const nextChips =
           response.suggestionChips ??
           (response.suggestions ?? STARTER_CHIPS.map((c) => c.message)).map((s) => ({
@@ -317,26 +371,22 @@ export default function AssistantScreen() {
         setComposerChips(nextChips.length ? nextChips : STARTER_CHIPS);
 
       } catch {
+        const errId = `err-${Date.now()}`;
+        const errContent =
+          "I couldn't reach the server. Make sure the backend is running on port 3001, then try again.";
 
         setMessages((prev) => [
-
           ...prev,
-
           {
-
-            id: `err-${Date.now()}`,
-
+            id: errId,
             role: "assistant",
-
-            content:
-
-              "I couldn't reach the server. Make sure the backend is running on port 3001, then try again.",
-
+            content: errContent,
             timestamp: Date.now(),
-
           },
-
         ]);
+
+        const errSpeech = sanitizeChatForSpeech(errContent);
+        if (errSpeech && speechAvailable) speak(errSpeech, errId);
 
         setComposerChips(STARTER_CHIPS);
 
@@ -372,19 +422,17 @@ export default function AssistantScreen() {
 
       session,
 
+      speak,
+
+      stopSpeech,
+
+      speechAvailable,
+
     ],
 
   );
 
-
-
   const isWeb = Platform.OS === "web";
-
-  const { listening, preparing, partial, available, toggle } = useVoiceInput({
-    onTranscriptChange: setInput,
-    onFinalTranscript: setInput,
-    onError: showVoiceError,
-  });
 
   const voiceActive = listening || preparing;
   const voiceStatus = getVoiceStatusLine({
@@ -400,18 +448,25 @@ export default function AssistantScreen() {
     partial: partial ?? "",
   });
 
-
+  const speechStatus = getOrderSpeechStatusLine(isPlaying, isPaused);
 
   return (
 
     <View className="flex-1 bg-bistro-bg">
 
       <Header
-
         title="AI Maître d'"
-
-        subtitle={available ? "Type or speak your order" : "Type your order below"}
-
+        subtitle={
+          Platform.OS === "web"
+            ? available
+              ? "Type or speak your order"
+              : "Type your order below"
+            : voiceWhisperReady === false
+              ? "Type your order — voice needs OPENAI_API_KEY on server"
+              : available
+                ? "Type or speak your order"
+                : `Type your order — check API at ${getApiUrl()}`
+        }
       />
 
 
@@ -523,15 +578,101 @@ export default function AssistantScreen() {
 
           <SuggestionChips chips={composerChips} onSelect={(s) => sendMessage(s)} />
 
-
+          {speechAvailable && hasPlayback && !voiceActive ? (
+            <View
+              style={{
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: 10,
+                paddingHorizontal: 12,
+                paddingVertical: 10,
+                borderRadius: 12,
+                borderWidth: 1,
+                borderColor: "#3d3528",
+                backgroundColor: "#242019",
+                gap: 10,
+              }}
+            >
+              <View
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: 4,
+                  backgroundColor: isPaused ? "#9a9080" : "#c9a962",
+                }}
+              />
+              <Text style={{ flex: 1, color: "#c9a962", fontSize: 13 }}>{speechStatus}</Text>
+              {isPlaying ? (
+                <Pressable
+                  onPress={() => {
+                    hapticImpact(Haptics.ImpactFeedbackStyle.Light);
+                    pauseSpeech();
+                  }}
+                  accessibilityLabel="Pause read aloud"
+                  style={({ pressed }) => ({
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: pressed ? "#3d3528" : "#2a2520",
+                    borderWidth: 1,
+                    borderColor: "#c9a962",
+                  })}
+                >
+                  <Ionicons name="pause" size={18} color="#c9a962" />
+                </Pressable>
+              ) : (
+                <Pressable
+                  onPress={() => {
+                    hapticImpact(Haptics.ImpactFeedbackStyle.Light);
+                    resumeSpeech();
+                  }}
+                  accessibilityLabel="Resume read aloud"
+                  style={({ pressed }) => ({
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: pressed ? "#3d3528" : "#2a2520",
+                    borderWidth: 1,
+                    borderColor: "#c9a962",
+                  })}
+                >
+                  <Ionicons name="play" size={18} color="#c9a962" />
+                </Pressable>
+              )}
+              <Pressable
+                onPress={() => {
+                  hapticImpact(Haptics.ImpactFeedbackStyle.Light);
+                  stopSpeech();
+                }}
+                accessibilityLabel="Stop read aloud"
+                style={({ pressed }) => ({
+                  width: 36,
+                  height: 36,
+                  borderRadius: 18,
+                  alignItems: "center",
+                  justifyContent: "center",
+                  backgroundColor: pressed ? "#3d3528" : "#2a2520",
+                  borderWidth: 1,
+                  borderColor: "#6b6358",
+                })}
+              >
+                <Ionicons name="close" size={18} color="#9a9080" />
+              </Pressable>
+            </View>
+          ) : null}
 
           <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 8 }}>
             <Pressable
               onPress={() => {
                 hapticImpact(Haptics.ImpactFeedbackStyle.Medium);
+                stopSpeech();
                 toggle();
               }}
-              disabled={!available || sending}
+              disabled={sending || (Platform.OS === "web" && !available)}
               style={({ pressed }) => ({
                 width: 48,
                 height: 48,
@@ -541,7 +682,7 @@ export default function AssistantScreen() {
                 backgroundColor: voiceActive ? "#e85d4c" : pressed ? "#2a2520" : "#242019",
                 borderWidth: 1,
                 borderColor: voiceActive ? "#e85d4c" : "#3d3528",
-                opacity: !available || sending ? 0.45 : 1,
+                opacity: sending || (Platform.OS === "web" && !available) ? 0.45 : 1,
               })}
             >
               <Ionicons

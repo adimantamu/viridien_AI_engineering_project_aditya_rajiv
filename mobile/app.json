@@ -46,7 +46,7 @@
     },
     "extra": {
       "apiUrlLocal": "http://localhost:3001",
-      "apiUrlDevice": "http://172.17.136.253:3001"
+      "apiUrlDevice": "http://192.168.12.159:3001"
     }
   }
 }

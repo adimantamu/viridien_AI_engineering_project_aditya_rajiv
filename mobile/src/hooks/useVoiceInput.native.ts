@@ -1,8 +1,18 @@
 import { Audio } from "expo-av";
 import Constants from "expo-constants";
+import * as Device from "expo-device";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Platform } from "react-native";
-import { fetchVoiceBackendReady, transcribeAudioFile } from "@/src/lib/transcribeAudio";
+import { AppState, Platform, type AppStateStatus } from "react-native";
+import {
+  prepareNativeAudioForRecording,
+  prepareNativeAudioForSpeech,
+} from "@/src/lib/nativeAudioForSpeech";
+import {
+  fetchApiHealth,
+  fetchApiReachable,
+  formatVoiceSetupError,
+  transcribeAudioFile,
+} from "@/src/lib/transcribeAudio";
 import type { UseVoiceInputOptions, UseVoiceInputResult } from "./useVoiceInput.types";
 
 const useExpoGoWhisper =
@@ -51,6 +61,7 @@ export function useVoiceInput({
   const recordingRef = useRef<Audio.Recording | null>(null);
   const speechRef = useRef<SpeechModule | null>(null);
   const listeningRef = useRef(false);
+  const preparingRef = useRef(false);
   const transcriptRef = useRef("");
   const subsRef = useRef<{ remove: () => void }[]>([]);
 
@@ -70,6 +81,30 @@ export function useVoiceInput({
     onErrorRef.current = onError;
   }, [onError]);
 
+  const refreshAvailability = useCallback(async () => {
+    if (useExpoGoWhisper) {
+      if (!Device.isDevice) {
+        setAvailable(false);
+        return;
+      }
+      setAvailable(await fetchApiReachable());
+      return;
+    }
+
+    const module = loadSpeechModule();
+    speechRef.current = module;
+    if (!module) {
+      setAvailable(false);
+      return;
+    }
+
+    try {
+      setAvailable(module.isRecognitionAvailable());
+    } catch {
+      setAvailable(false);
+    }
+  }, []);
+
   const publishTranscript = useCallback((text: string) => {
     transcriptRef.current = text;
     setPartial(text);
@@ -83,41 +118,49 @@ export function useVoiceInput({
     subsRef.current = [];
   }, []);
 
-  const finishNativeSpeech = useCallback(() => {
+  const resetVoiceUi = useCallback(() => {
     listeningRef.current = false;
+    preparingRef.current = false;
     setListening(false);
     setPreparing(false);
+    setPartial("");
+  }, []);
+
+  const finishNativeSpeech = useCallback(() => {
+    resetVoiceUi();
 
     const text = transcriptRef.current.trim();
     if (text) {
       onFinalTranscriptRef.current?.(text);
     }
-  }, []);
+  }, [resetVoiceUi]);
 
   useEffect(() => {
+    void refreshAvailability();
+
+    const onAppState = (state: AppStateStatus) => {
+      if (state === "active") {
+        void refreshAvailability();
+      }
+    };
+
+    const sub = AppState.addEventListener("change", onAppState);
+
     if (useExpoGoWhisper) {
-      void fetchVoiceBackendReady().then(setAvailable);
-      return;
+      return () => sub.remove();
     }
 
     const module = loadSpeechModule();
     speechRef.current = module;
 
     if (!module) {
-      setAvailable(false);
-      return;
-    }
-
-    try {
-      setAvailable(module.isRecognitionAvailable());
-    } catch {
-      setAvailable(false);
-      return;
+      return () => sub.remove();
     }
 
     const onStart = () => {
       listeningRef.current = true;
       setListening(true);
+      preparingRef.current = false;
       setPreparing(false);
     };
 
@@ -138,9 +181,7 @@ export function useVoiceInput({
         return;
       }
       onErrorRef.current?.(event.message || "Voice input failed");
-      listeningRef.current = false;
-      setListening(false);
-      setPreparing(false);
+      resetVoiceUi();
     };
 
     subsRef.current = [
@@ -151,31 +192,25 @@ export function useVoiceInput({
     ];
 
     return () => {
+      sub.remove();
       removeListeners();
     };
-  }, [finishNativeSpeech, publishTranscript, removeListeners]);
+  }, [finishNativeSpeech, publishTranscript, refreshAvailability, removeListeners, resetVoiceUi]);
 
   const startWhisperRecording = useCallback(async () => {
-    if (!available) {
-      onErrorRef.current?.(
-        "Voice needs OPENAI_API_KEY on the server. Set it in backend/.env, restart the API, and confirm http://YOUR_PC_IP:3001/health shows voice: whisper on your iPhone.",
-      );
+    const health = await fetchApiHealth();
+    if (!health.ok || health.voice !== "whisper") {
+      onErrorRef.current?.(formatVoiceSetupError(health));
       return;
     }
 
     const permission = await Audio.requestPermissionsAsync();
     if (!permission.granted) {
-      onErrorRef.current?.("Microphone permission is required for voice ordering.");
+      onErrorRef.current?.("Microphone permission is required. Enable it in Settings → Expo Go → Microphone.");
       return;
     }
 
-    await Audio.setAudioModeAsync({
-      allowsRecordingIOS: true,
-      playsInSilentModeIOS: true,
-      staysActiveInBackground: false,
-      shouldDuckAndroid: true,
-      playThroughEarpieceAndroid: false,
-    });
+    await prepareNativeAudioForRecording();
 
     const { recording } = await Audio.Recording.createAsync(
       Audio.RecordingOptionsPresets.HIGH_QUALITY,
@@ -185,7 +220,7 @@ export function useVoiceInput({
     listeningRef.current = true;
     setListening(true);
     setPartial("Recording… tap stop when finished");
-  }, [available]);
+  }, []);
 
   const stopWhisperRecording = useCallback(async () => {
     const recording = recordingRef.current;
@@ -193,8 +228,14 @@ export function useVoiceInput({
     listeningRef.current = false;
     setListening(false);
 
-    if (!recording) return;
+    if (!recording) {
+      preparingRef.current = false;
+      setPreparing(false);
+      setPartial("");
+      return;
+    }
 
+    preparingRef.current = true;
     setPreparing(true);
     setPartial("Transcribing…");
 
@@ -221,12 +262,9 @@ export function useVoiceInput({
       setPartial("");
       onErrorRef.current?.(e instanceof Error ? e.message : "Transcription failed");
     } finally {
+      preparingRef.current = false;
       setPreparing(false);
-      try {
-        await Audio.setAudioModeAsync({ allowsRecordingIOS: false });
-      } catch {
-        /* ignore */
-      }
+      await prepareNativeAudioForSpeech();
     }
   }, []);
 
@@ -278,31 +316,34 @@ export function useVoiceInput({
       }
       return;
     }
-    if (listeningRef.current || preparing) {
+    if (listeningRef.current || preparingRef.current) {
       finishNativeSpeech();
     }
-  }, [finishNativeSpeech, preparing]);
+  }, [finishNativeSpeech]);
 
   const start = useCallback(async () => {
-    if (listeningRef.current || preparing) return;
+    if (listeningRef.current || preparingRef.current) return;
 
     try {
+      preparingRef.current = true;
+      setPreparing(true);
+
       if (useExpoGoWhisper) {
-        setPreparing(true);
         await startWhisperRecording();
-        setPreparing(false);
       } else {
-        setPreparing(true);
         onTranscriptChangeRef.current?.("");
         await startNativeSpeech();
       }
     } catch (e) {
       onErrorRef.current?.(e instanceof Error ? e.message : "Could not start voice input");
-      listeningRef.current = false;
-      setListening(false);
-      setPreparing(false);
+      resetVoiceUi();
+    } finally {
+      if (!listeningRef.current) {
+        preparingRef.current = false;
+        setPreparing(false);
+      }
     }
-  }, [preparing, startNativeSpeech, startWhisperRecording]);
+  }, [resetVoiceUi, startNativeSpeech, startWhisperRecording]);
 
   const stop = useCallback(() => {
     if (useExpoGoWhisper) {
@@ -313,12 +354,12 @@ export function useVoiceInput({
   }, [stopNativeSpeech, stopWhisperRecording]);
 
   const toggle = useCallback(() => {
-    if (listeningRef.current || preparing) {
+    if (listeningRef.current || preparingRef.current) {
       stop();
     } else {
       void start();
     }
-  }, [preparing, start, stop]);
+  }, [start, stop]);
 
   return {
     listening,

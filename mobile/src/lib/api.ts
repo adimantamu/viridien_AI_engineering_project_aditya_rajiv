@@ -20,10 +20,41 @@ function getExtra(): ApiExtra {
   return (Constants.expoConfig?.extra ?? {}) as ApiExtra;
 }
 
+/**
+ * On Expo Go, Metro and the API should share the same LAN host (e.g. 192.168.x.x).
+ * Derive it from the dev server so apiUrlDevice does not go stale when Wi‑Fi changes.
+ */
+function getExpoDevServerHost(): string | null {
+  const hostUri = Constants.expoConfig?.hostUri;
+  if (hostUri) {
+    const host = hostUri.replace(/^exp:\/\//, "").split(":")[0]?.trim();
+    if (host && host !== "localhost" && host !== "127.0.0.1") {
+      return host;
+    }
+  }
+
+  const expoGoConfig = (
+    Constants as typeof Constants & { expoGoConfig?: { debuggerHost?: string } }
+  ).expoGoConfig;
+  const debuggerHost = expoGoConfig?.debuggerHost;
+  if (debuggerHost) {
+    const host = debuggerHost.split(":")[0]?.trim();
+    if (host) return host;
+  }
+
+  const legacyManifest = (
+    Constants as typeof Constants & { manifest?: { debuggerHost?: string } }
+  ).manifest;
+  const legacyHost = legacyManifest?.debuggerHost?.split(":")[0]?.trim();
+  if (legacyHost) return legacyHost;
+
+  return null;
+}
+
 export function getApiBaseUrl(): string {
   const extra = getExtra();
   const local = extra.apiUrlLocal ?? extra.apiUrl ?? "http://localhost:3001";
-  const device = extra.apiUrlDevice ?? local;
+  const configuredDevice = extra.apiUrlDevice ?? local;
 
   if (Platform.OS === "web") {
     return local;
@@ -34,16 +65,18 @@ export function getApiBaseUrl(): string {
   }
 
   if (Device.isDevice) {
-    return device;
+    const expoHost = getExpoDevServerHost();
+    if (expoHost) {
+      return `http://${expoHost}:3001`;
+    }
+    return configuredDevice;
   }
 
   return local;
 }
 
-const API_BASE = getApiBaseUrl();
-
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(`${API_BASE}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -87,5 +120,5 @@ export async function checkHealth(): Promise<boolean> {
 }
 
 export function getApiUrl(): string {
-  return API_BASE;
+  return getApiBaseUrl();
 }
